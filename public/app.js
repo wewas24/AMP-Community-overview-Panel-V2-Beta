@@ -191,13 +191,16 @@ $("#close-details").addEventListener("click", closeDetails); $("#details-dialog"
 $("#admin-button").addEventListener("click", openAdmin); $("#close-login").addEventListener("click", () => $("#login-dialog").close()); $("#close-admin").addEventListener("click", () => $("#admin-dialog").close());
 $("#login-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
+  // Browser event objects are cleared after an await. Keep the form itself so
+  // that a successful login can safely reset it after loading the dashboard.
+  const formElement = event.currentTarget;
+  const form = new FormData(formElement);
   try {
     const response = await api("login", { method: "POST", body: JSON.stringify({ username: form.get("username"), password: form.get("password") }) });
     if (!response.ok) return text($("#login-message"), await message(response));
     await loadSession();
     if (!admin) throw new Error("Die Anmeldung wurde nicht im Browser gespeichert. Bitte die Seite über HTTPS öffnen und die Browserdaten dieser Seite aktualisieren.");
-    event.currentTarget.reset();
+    formElement.reset();
     text($("#login-message"), "");
     $("#login-dialog").close();
     await openAdmin();
