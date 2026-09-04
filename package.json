@@ -1,8 +1,8 @@
 {
   "name": "amp-community-dashboard-v2",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "private": true,
-  "description": "AMP Community Dashboard v2.1 mit automatischer Community-Erkennung und Statusmonitoring.",
+  "description": "AMP Community Dashboard v2.1.1 mit gehärteter Community-Erkennung und Statusmonitoring.",
   "type": "module",
   "scripts": {
     "start": "node server.mjs",

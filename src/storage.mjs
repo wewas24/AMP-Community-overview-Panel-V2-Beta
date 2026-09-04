@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { config, roles } from "./config.mjs";
@@ -19,8 +19,12 @@ CREATE TABLE IF NOT EXISTS admins (
 );
 CREATE TABLE IF NOT EXISTS sessions (
   token_hash TEXT PRIMARY KEY, username TEXT NOT NULL, created_at INTEGER NOT NULL,
-  last_seen_at INTEGER NOT NULL, idle_expires_at INTEGER NOT NULL, maximum_expires_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL, idle_expires_at INTEGER NOT NULL, maximum_expires_at INTEGER NOT NULL, csrf_token TEXT NOT NULL DEFAULT '',
   FOREIGN KEY(username) REFERENCES admins(username) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS login_rate_limits (
+  scope TEXT NOT NULL, subject_hash TEXT NOT NULL, failures INTEGER NOT NULL,
+  last_failure_at INTEGER NOT NULL, PRIMARY KEY(scope, subject_hash)
 );
 CREATE TABLE IF NOT EXISTS status_current (
   server_id TEXT PRIMARY KEY, state TEXT NOT NULL, detail TEXT NOT NULL,
@@ -39,6 +43,8 @@ CREATE TABLE IF NOT EXISTS activity_log (
   subject TEXT NOT NULL, result TEXT NOT NULL, detail TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS activity_by_time ON activity_log(created_at DESC);
+CREATE TRIGGER IF NOT EXISTS activity_log_append_only
+BEFORE UPDATE ON activity_log BEGIN SELECT RAISE(ABORT, 'activity log is append-only'); END;
 `;
 
 function parse(value, fallback) {
@@ -55,7 +61,7 @@ function defaultSettings() {
     accentColor: "#42e8a5",
     defaultDetailRefreshSeconds: config.defaultRefreshSeconds,
     monitoringIntervalSeconds: config.defaultMonitorSeconds,
-    smtp: { host: "", port: config.defaultSmtpPort, username: "", password: "", from: "", to: "" }
+    smtp: { host: "", port: config.defaultSmtpPort, username: "", from: "", to: "" }
   };
 }
 
@@ -90,11 +96,42 @@ async function readJson(file) {
   try { return JSON.parse(await readFile(file, "utf8")); } catch { return null; }
 }
 
+function redactSmtpSecrets(value) {
+  if (!value || typeof value !== "object") return false;
+  let changed = false;
+  if (Array.isArray(value)) return value.reduce((any, item) => redactSmtpSecrets(item) || any, false);
+  for (const key of Object.keys(value)) {
+    if (key === "smtpPassword" || (key === "password" && ("smtp" in value || "host" in value || "port" in value || "username" in value))) { delete value[key]; changed = true; continue; }
+    changed = redactSmtpSecrets(value[key]) || changed;
+  }
+  return changed;
+}
+
+async function redactJsonFile(file) {
+  try {
+    const value = JSON.parse(await readFile(file, "utf8"));
+    if (!redactSmtpSecrets(value)) return;
+    await writeFile(file, JSON.stringify(value, null, 2), { mode: 0o600 });
+    await chmod(file, 0o600);
+  } catch { /* not a JSON backup or not readable */ }
+}
+
+async function redactBackupDirectory(directory) {
+  let entries = [];
+  try { entries = await readdir(directory, { withFileTypes: true }); } catch { return; }
+  for (const entry of entries) {
+    const file = join(directory, entry.name);
+    if (entry.isDirectory()) await redactBackupDirectory(file);
+    else if (entry.isFile() && entry.name.toLowerCase().endsWith(".json")) await redactJsonFile(file);
+  }
+}
+
 export class Store {
-  constructor(database, dataDirectory, backupDirectory) {
+  constructor(database, dataDirectory, backupDirectory, secretsDirectory) {
     this.db = database;
     this.dataDirectory = dataDirectory;
     this.backupDirectory = backupDirectory;
+    this.secretsDirectory = secretsDirectory;
   }
 
   getMeta(key) { return this.db.prepare("SELECT value FROM meta WHERE key = ?").get(key)?.value ?? null; }
@@ -104,13 +141,37 @@ export class Store {
     const stored = this.db.prepare("SELECT payload FROM settings WHERE id = 1").get();
     const base = defaultSettings();
     const value = stored ? parse(stored.payload, {}) : {};
-    return { ...base, ...value, smtp: { ...base.smtp, ...(value.smtp || {}) } };
+    const settings = { ...base, ...value, smtp: { ...base.smtp, ...(value.smtp || {}) } };
+    // Passwords from v2.1 and older are only read here for the one-time
+    // migration below. New settings never expose or persist this field.
+    return settings;
   }
 
   saveSettings(settings) {
-    this.db.prepare("INSERT INTO settings(id,payload) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload").run(JSON.stringify(settings));
-    return settings;
+    const { smtpSecret, ...persisted } = settings;
+    const smtp = { ...(persisted.smtp || {}) };
+    delete smtp.password;
+    persisted.smtp = smtp;
+    this.db.prepare("INSERT INTO settings(id,payload) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload").run(JSON.stringify(persisted));
+    return persisted;
   }
+
+  async getSmtpPassword() {
+    try { return (await readFile(config.smtpSecretFile, "utf8")).trim(); } catch { return ""; }
+  }
+
+  async setSmtpPassword(value) {
+    const password = String(value || "").slice(0, 512);
+    await mkdir(this.secretsDirectory, { recursive: true, mode: 0o700 });
+    if (!password) { await writeFile(config.smtpSecretFile, "", { mode: 0o600 }); await chmod(config.smtpSecretFile, 0o600); return; }
+    const temporary = `${config.smtpSecretFile}.${randomUUID()}.tmp`;
+    await writeFile(temporary, password, { mode: 0o600 });
+    await chmod(temporary, 0o600);
+    await rename(temporary, config.smtpSecretFile);
+    await chmod(config.smtpSecretFile, 0o600);
+  }
+
+  async smtpPasswordConfigured() { return Boolean(await this.getSmtpPassword()); }
 
   allServers() {
     return this.db.prepare("SELECT * FROM servers ORDER BY sort_order ASC, created_at ASC").all().map((row) => ({ ...parse(row.payload, {}), id: row.id, slug: row.slug, sortOrder: row.sort_order, createdAt: row.created_at, updatedAt: row.updated_at }));
@@ -232,7 +293,11 @@ export class Store {
   }
 
   addActivity(username, action, subject = "", result = "ok", detail = "") {
-    this.db.prepare("INSERT INTO activity_log(id,created_at,username,action,subject,result,detail) VALUES(?,?,?,?,?,?,?)").run(randomUUID(), now(), username, String(action).slice(0, 100), String(subject).slice(0, 120), result === "error" ? "error" : "ok", String(detail).slice(0, 300));
+    const redact = (value, maximum) => String(value || "")
+      .replace(/(pass(?:word)?|token|secret|authorization)\s*[:=]\s*\S+/gi, "$1=[geschützt]")
+      .replace(/\b(?:\d{1,3}\.){3}\d{1,3}:\d{1,5}\b/g, "[interne Adresse]")
+      .slice(0, maximum);
+    this.db.prepare("INSERT INTO activity_log(id,created_at,username,action,subject,result,detail) VALUES(?,?,?,?,?,?,?)").run(randomUUID(), now(), redact(username, 32), redact(action, 100), redact(subject, 120), result === "error" ? "error" : "ok", redact(detail, 300));
   }
 
   latestActivity(limit = 5) { return this.db.prepare("SELECT * FROM activity_log ORDER BY created_at DESC LIMIT ?").all(limit); }
@@ -245,10 +310,10 @@ export class Store {
   removeAdmin(username) { this.db.prepare("DELETE FROM admins WHERE username = ?").run(username); }
   adminCount() { return Number(this.db.prepare("SELECT count(*) AS count FROM admins").get().count); }
 
-  createSession(tokenHash, username, idleMs, maximumMs) {
+  createSession(tokenHash, csrfToken, username, idleMs, maximumMs) {
     const started = Date.now();
     this.db.prepare("DELETE FROM sessions WHERE username = ?").run(username);
-    this.db.prepare("INSERT INTO sessions(token_hash,username,created_at,last_seen_at,idle_expires_at,maximum_expires_at) VALUES(?,?,?,?,?,?)").run(tokenHash, username, started, started, started + idleMs, started + maximumMs);
+    this.db.prepare("INSERT INTO sessions(token_hash,username,created_at,last_seen_at,idle_expires_at,maximum_expires_at,csrf_token) VALUES(?,?,?,?,?,?,?)").run(tokenHash, username, started, started, started + idleMs, started + maximumMs, csrfToken);
   }
 
   getSession(tokenHash, idleMs) {
@@ -261,10 +326,31 @@ export class Store {
   removeSession(tokenHash) { this.db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(tokenHash); }
   removeSessionsFor(username) { this.db.prepare("DELETE FROM sessions WHERE username = ?").run(username); }
 
+  loginRetryAfter(ipHash, usernameHash) {
+    const current = Date.now();
+    const rows = this.db.prepare("SELECT failures,last_failure_at FROM login_rate_limits WHERE (scope = 'ip' AND subject_hash = ?) OR (scope = 'username' AND subject_hash = ?)").all(ipHash, usernameHash);
+    const waits = [1_000, 2_000, 5_000, 15_000, 60_000, 5 * 60_000];
+    return rows.reduce((maximum, row) => Math.max(maximum, Math.max(0, Math.ceil((row.last_failure_at + waits[Math.min(row.failures - 1, waits.length - 1)] - current) / 1000))), 0);
+  }
+
+  recordLoginFailure(ipHash, usernameHash) {
+    const current = Date.now();
+    for (const [scope, subjectHash] of [["ip", ipHash], ["username", usernameHash]]) {
+      this.db.prepare(`INSERT INTO login_rate_limits(scope,subject_hash,failures,last_failure_at) VALUES(?,?,1,?)
+        ON CONFLICT(scope,subject_hash) DO UPDATE SET failures = CASE WHEN login_rate_limits.last_failure_at < ? THEN 1 ELSE MIN(login_rate_limits.failures + 1, 20) END, last_failure_at = excluded.last_failure_at`).run(scope, subjectHash, current, current - 15 * 60_000);
+    }
+  }
+
+  clearLoginFailures(ipHash, usernameHash) {
+    this.db.prepare("DELETE FROM login_rate_limits WHERE (scope = 'ip' AND subject_hash = ?) OR (scope = 'username' AND subject_hash = ?)").run(ipHash, usernameHash);
+  }
+
+  cleanupLoginFailures() { this.db.prepare("DELETE FROM login_rate_limits WHERE last_failure_at < ?").run(Date.now() - 15 * 60_000); }
+
   exportData() {
     const settings = this.getSettings();
     return {
-      version: 6, exportedAt: now(), settings: { ...settings, smtp: { ...settings.smtp, password: undefined } },
+      version: 7, exportedAt: now(), settings: { ...settings, smtp: { ...settings.smtp } },
       servers: this.allServers(), admins: this.listAdmins()
     };
   }
@@ -301,9 +387,11 @@ export class Store {
     }
     const oldSettings = source["settings.json"] || {};
     const settings = this.getSettings();
+    const legacySmtpPassword = oldSettings.smtpPassword || "";
     this.saveSettings({ ...settings, siteTitle: oldSettings.siteTitle || settings.siteTitle, smtp: {
-      ...settings.smtp, host: oldSettings.smtpHost || "", port: Number(oldSettings.smtpPort) || config.defaultSmtpPort, username: oldSettings.smtpUsername || "", password: oldSettings.smtpPassword || "", from: oldSettings.smtpFrom || "", to: oldSettings.smtpTo || ""
+      ...settings.smtp, host: oldSettings.smtpHost || "", port: Number(oldSettings.smtpPort) || config.defaultSmtpPort, username: oldSettings.smtpUsername || "", from: oldSettings.smtpFrom || "", to: oldSettings.smtpTo || ""
     } });
+    if (legacySmtpPassword) await this.setSmtpPassword(legacySmtpPassword);
     const importedAdmins = Array.isArray(source["admins.json"]) ? source["admins.json"] : source["admin.json"] ? [source["admin.json"]] : [];
     if (this.adminCount() === 0) for (const admin of importedAdmins) {
       if (admin?.username && admin?.salt && admin?.hash) this.addAdmin({ username: admin.username, salt: admin.salt, hash: admin.hash, role: roles.has(admin.role) ? admin.role : "owner", createdAt: admin.createdAt || now() });
@@ -313,16 +401,37 @@ export class Store {
     }
     this.setMeta("v2-migrated", "true");
   }
+
+  async migrateSmtpSecret() {
+    if (this.getMeta("smtp-secret-v2.1.1") === "true") return;
+    const settings = this.getSettings();
+    const oldPassword = String(settings.smtp?.password || "");
+    if (oldPassword && !(await this.getSmtpPassword())) await this.setSmtpPassword(oldPassword);
+    delete settings.smtp.password;
+    this.saveSettings(settings);
+    await redactJsonFile(join(this.dataDirectory, "settings.json"));
+    await redactBackupDirectory(this.backupDirectory);
+    // Old session rows do not have a CSRF secret. Deliberately invalidate them
+    // instead of silently accepting a session without CSRF protection.
+    this.db.exec("DELETE FROM sessions");
+    this.db.exec("VACUUM");
+    this.setMeta("smtp-secret-v2.1.1", "true");
+  }
 }
 
 export async function openStore() {
   await mkdir(config.dataDirectory, { recursive: true });
   await mkdir(config.backupDirectory, { recursive: true });
+  await mkdir(config.secretsDirectory, { recursive: true, mode: 0o700 });
   const database = new DatabaseSync(config.databaseFile);
   try { await chmod(config.databaseFile, 0o600); } catch { /* platform may not support chmod */ }
   database.exec(schema);
-  const store = new Store(database, config.dataDirectory, config.backupDirectory);
+  // The column is added separately for databases created by v2.0/v2.1.
+  try { database.exec("ALTER TABLE sessions ADD COLUMN csrf_token TEXT NOT NULL DEFAULT ''"); } catch { /* already migrated */ }
+  const store = new Store(database, config.dataDirectory, config.backupDirectory, config.secretsDirectory);
   await store.migrateLegacy();
+  await store.migrateSmtpSecret();
   store.cleanup({ activityMs: config.activityRetentionMs, historyMs: config.historyRetentionMs });
+  store.cleanupLoginFailures();
   return store;
 }

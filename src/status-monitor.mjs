@@ -3,6 +3,9 @@ import { createSocket } from "node:dgram";
 import { config } from "./config.mjs";
 import { resolveSafeTarget } from "./security.mjs";
 
+const maximumUdpResponseBytes = 64 * 1024;
+const maximumTeamSpeakResponseBytes = 64 * 1024;
+
 function stamp(state, detail, extra = {}) {
   return { state, detail, checkedAt: new Date().toISOString(), ...extra };
 }
@@ -53,7 +56,10 @@ async function udpProbe(address, port, payload) {
     const timer = setTimeout(() => finish(stamp("TIMEOUT", "Die UDP-Abfrage hat nicht geantwortet.")), config.statusTimeoutMs);
     timer.unref?.();
     socket.once("error", () => finish(stamp("QUERY_FAILED", "Die UDP-Abfrage konnte nicht ausgeführt werden.")));
-    socket.once("message", (message) => finish(stamp("ONLINE", "Der Server antwortet auf die Steam-Abfrage.", { latencyMs: Date.now() - started, response: message })));
+    socket.once("message", (message) => {
+      if (message.length > maximumUdpResponseBytes) return finish(stamp("QUERY_FAILED", "Die Steam-Antwort ist zu groß."));
+      finish(stamp("ONLINE", "Der Server antwortet auf die Steam-Abfrage.", { latencyMs: Date.now() - started, response: message }));
+    });
     socket.send(payload, port, address, (error) => { if (error) finish(stamp("QUERY_FAILED", "Die UDP-Abfrage konnte nicht gesendet werden.")); });
   });
 }
@@ -181,6 +187,7 @@ async function teamSpeakProbe(address, voicePort, queryPort) {
     timer.unref?.();
     socket.once("error", () => finish("QUERY_FAILED", "Der TeamSpeak-ServerQuery-Port ist nicht erreichbar."));
     socket.on("data", (chunk) => {
+      if (Buffer.byteLength(response) + chunk.length > maximumTeamSpeakResponseBytes) return finish("QUERY_FAILED", "Die TeamSpeak-Antwort ist zu groß.");
       response += chunk.toString("utf8");
       if (!selected && /TS3|TeamSpeak/i.test(response)) {
         selected = true; response = ""; socket.write(`use port=${voicePort}\nclientlist\n`); return;

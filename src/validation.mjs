@@ -44,7 +44,7 @@ export function httpsUrl(value, label, optional = true) {
   if (!raw && optional) return "";
   try {
     const url = new URL(raw);
-    if (url.protocol !== "https:" || !url.hostname || url.username || url.password) throw new Error();
+    if (url.protocol !== "https:" || !url.hostname || url.username || url.password || (isIP(url.hostname) && isPrivateAddress(url.hostname))) throw new Error();
     return url.toString();
   } catch {
     throw new Error(`${label} muss eine öffentliche HTTPS-Adresse ohne Zugangsdaten sein.`);
@@ -101,7 +101,14 @@ export function normalizeServer(input, existing = {}, sortOrder = 0, allowPrivat
       modpack: httpsUrl(linksInput.modpack, "Der Modpack-Link", true)
     },
     monitoring: { enabled: monitoringInput.enabled !== false, intervalSeconds: Number.isInteger(Number(monitoringInput.intervalSeconds)) ? Math.min(3600, Math.max(30, Number(monitoringInput.intervalSeconds))) : 30 },
-    display: { showPlayers: displayInput.showPlayers !== false, showPing: displayInput.showPing !== false, showVersion: displayInput.showVersion !== false },
+    display: {
+      showPlayers: displayInput.showPlayers !== false,
+      showPing: displayInput.showPing !== false,
+      showVersion: displayInput.showVersion !== false,
+      // A game address can be operationally sensitive. It is only sent to
+      // visitors after an owner explicitly enables the public connect button.
+      showConnect: displayInput.showConnect === true || existing.display?.showConnect === true
+    },
     sortOrder,
     createdAt: existing.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
@@ -119,11 +126,13 @@ export function normalizeSettings(input, previous, defaultSmtpPort) {
   };
   const smtp = input?.smtp && typeof input.smtp === "object" ? input.smtp : {};
   next.smtp = { ...previous.smtp };
+  delete next.smtp.password;
+  next.smtpSecret = undefined;
   if (input?.smtp !== undefined) {
-    next.smtp.host = smtp.host === undefined ? previous.smtp.host : cleanText(smtp.host, "", 253);
+    next.smtp.host = smtp.host === undefined ? previous.smtp.host : cleanText(smtp.host, "", 253).replace(/^\[|\]$/g, "");
     next.smtp.port = smtp.port === undefined || smtp.port === "" ? previous.smtp.port : Number(smtp.port);
     next.smtp.username = smtp.username === undefined ? previous.smtp.username : cleanText(smtp.username, "", 253);
-    next.smtp.password = smtp.password === undefined || smtp.password === "" ? previous.smtp.password : String(smtp.password).slice(0, 512);
+    next.smtpSecret = smtp.password === undefined || smtp.password === "" ? undefined : String(smtp.password).slice(0, 512);
     next.smtp.from = smtp.from === undefined ? previous.smtp.from : emailAddress(smtp.from, "Die Absenderadresse", true);
     next.smtp.to = smtp.to === undefined ? previous.smtp.to : emailAddress(smtp.to, "Die Empfängeradresse", true);
     if (next.smtp.host && !validHost(next.smtp.host)) throw new Error("Der SMTP-Server ist ungültig.");

@@ -1,39 +1,40 @@
-AMP Community Dashboard v2.1 – Update
+AMP Community Dashboard v2.1.1 – Sicherheitsupdate
 
-Diese Anleitung verwendet ausschließlich Beispielwerte. Ersetze `amp.example.com` nur in deiner lokalen Nginx-Konfiguration.
+Diese Anleitung verwendet ausschließlich Beispielwerte.
 
-1. Zuerst den bestehenden Datenordner sichern:
-
-   cp -a /opt/amp-community-dashboard/data /opt/amp-community-dashboard/data.before-v2
-
-2. Node.js-Version prüfen. v2.1 benötigt Node.js 22 oder neuer:
-
-   node --version
-
-3. Dienst anhalten und das Update-Paket hochladen:
+1. Daten und bisherigen Projektordner sichern:
 
    systemctl stop amp-community-dashboard
-   unzip -o /opt/amp-community-dashboard-v2.1.0-community-automation.zip -d /opt/amp-community-dashboard
+   cp -a /opt/amp-community-dashboard /opt/amp-community-dashboard-before-v2.1.1
+
+2. Das Update-Paket entpacken und alle Dateien in den bestehenden Projektordner kopieren. Den Ordner `data` nicht löschen oder aus einem Paket überschreiben:
+
+   unzip -o /opt/amp-community-dashboard-v2.1.1-security.zip -d /opt/amp-community-dashboard
    chown -R amp:amp /opt/amp-community-dashboard
 
-4. Dienst wieder starten:
+3. Die mitgelieferte Dienstdatei nach `/etc/systemd/system/amp-community-dashboard.service` kopieren. Eigene Einstellungen, etwa `ALLOW_PRIVATE_NETWORKS=true`, bei Bedarf wieder bewusst ergänzen.
 
-   systemctl start amp-community-dashboard
+4. Nginx härten:
+
+   - `nginx-security-http.conf` im `http {}`-Bereich von Nginx einbinden.
+   - Den neuen Inhalt von `nginx-snippet.conf` in den vorhandenen HTTPS-Serverblock kopieren.
+   - Eine alte Zeile `proxy_cookie_path / /uebersicht/;` entfernen. Sie verhindert den sicheren `__Host-`-Cookie.
+
+   Danach prüfen:
+
+   nginx -t && systemctl reload nginx
+
+5. Dienst laden und starten:
+
+   systemctl daemon-reload
+   systemctl restart amp-community-dashboard
    systemctl status amp-community-dashboard --no-pager
 
-Beim ersten Start von v2 erstellt das Dashboard automatisch `data/dashboard-v2.sqlite` und kopiert vorhandene v1-Daten dorthin. Bei einem Update von v2.0 bleiben die vorhandene Datenbank und alle Einstellungen unverändert.
+Beim ersten Start werden vorhandene Sitzungen absichtlich beendet. Das SMTP-Passwort wird aus der Datenbank in `data/secrets/smtp-password` verschoben und erscheint nicht in Exporten oder neuen Sicherungen.
 
-5. Öffne anschließend:
+Wichtige Änderungen
 
-   https://amp.example.com/uebersicht/
-
-Anschließend einmal neu anmelden. Vorhandene Administratorkonten, Server, Rollen, Einstellungen und SMTP-Daten werden übernommen.
-
-Wichtig:
-
-- Das Update-Paket enthält keinen Datenordner und überschreibt deshalb keine Konfiguration.
-- Die vorhandene Systemdienst-Datei bleibt unverändert. Dadurch bleibt insbesondere eine bewusst gesetzte Freigabe für interne Spielserver erhalten.
-- Die neue Detailansicht lädt die AMP-Community-Seite erst nach Auswahl von „Details“.
-- Die neue Community-Erkennung liest nur öffentliche Daten aus. Bereits gespeicherte Spieladressen und Verbindungslinks werden nie automatisch überschrieben.
-- Für interne Spielserver darf `ALLOW_PRIVATE_NETWORKS=true` nur bewusst in der Systemdienst-Datei gesetzt werden.
-- Bei Problemen kann der Dienst gestoppt, die v1-Sicherung zurückkopiert und die vorherige v1-Version wieder eingespielt werden.
+- Spielserver-Adressen bleiben in der öffentlichen API verborgen. Für den Verbindungsbutton muss bei jedem Server „Verbindungsbutton öffentlich anzeigen“ aktiv gewählt werden.
+- Nur Vollzugriff kann automatische Erkennung, Spielserver-Tests sowie eine neue oder geänderte Spielserver-Adresse auslösen.
+- SMTP mit STARTTLS ist auf die erlaubten SMTP-Ports begrenzt. Standard sind 25, 587 und 2525.
+- Der Node-Dienst bleibt ausschließlich auf `127.0.0.1:3100`; der öffentliche Zugriff erfolgt nur über Nginx und HTTPS.

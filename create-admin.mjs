@@ -22,6 +22,6 @@ async function main() {
   if (!validUsername(username)) throw new Error("Der Benutzername muss 3–32 Zeichen lang sein und darf nur Buchstaben, Zahlen, Punkt, Bindestrich oder Unterstrich enthalten.");
   const first = await password("Passwort (mindestens 12 Zeichen): "); const second = await password("Passwort wiederholen: ");
   if (!validPassword(first)) throw new Error("Das Passwort muss mindestens 12 Zeichen lang sein."); if (first !== second) throw new Error("Die Passwörter stimmen nicht überein.");
-  store.addAdmin({ username, ...passwordRecord(first), role: "owner", createdAt: new Date().toISOString() }); store.addActivity(username, "Erstes Administratorkonto erstellt"); console.log(`Administratorkonto „${username}“ wurde erstellt.`);
+  store.addAdmin({ username, ...(await passwordRecord(first)), role: "owner", createdAt: new Date().toISOString() }); store.addActivity(username, "Erstes Administratorkonto erstellt"); console.log(`Administratorkonto „${username}“ wurde erstellt.`);
 }
 main().catch((error) => { console.error(`Fehler: ${error.message}`); process.exitCode = 1; });

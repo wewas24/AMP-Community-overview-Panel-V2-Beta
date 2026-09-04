@@ -1,19 +1,17 @@
-AMP Community Dashboard v2.1 – Installation für AMP mit Nginx
+AMP Community Dashboard v2.1.1 – Installation für AMP mit Nginx
 
 Diese Anleitung verwendet die Beispiel-Domain `amp.example.com`.
 
 Voraussetzungen
 
-- Eine laufende AMP-Installation hinter Nginx und HTTPS.
-- Node.js 22 oder neuer.
-- Root-Zugriff für die Installation.
+- Eine laufende AMP-Installation hinter Nginx und HTTPS
+- Node.js 22 oder neuer
+- Ein Dienstkonto `amp`
 
 1. Dashboard ablegen
 
-Das Paket nach `/opt/amp-community-dashboard` entpacken:
-
    mkdir -p /opt/amp-community-dashboard
-   unzip /opt/amp-community-dashboard-v2.1.zip -d /opt/amp-community-dashboard
+   unzip /opt/amp-community-dashboard-v2.1.1-security.zip -d /opt/amp-community-dashboard
    chown -R amp:amp /opt/amp-community-dashboard
 
 2. Erstes Administratorkonto erstellen
@@ -28,16 +26,19 @@ Das Paket nach `/opt/amp-community-dashboard` entpacken:
    systemctl enable --now amp-community-dashboard
    systemctl status amp-community-dashboard --no-pager
 
-Die Ausgabe muss `active (running)` zeigen.
+Die Ausgabe muss `active (running)` zeigen. Der Dienst lauscht nur auf `127.0.0.1:3100`.
 
 4. Nginx ergänzen
 
-In den vorhandenen HTTPS-Serverblock von `amp.example.com` den Inhalt von `nginx-snippet.conf` einfügen. Anschließend:
+`nginx-security-http.conf` im globalen Nginx-`http {}`-Bereich einbinden. Danach den Inhalt von `nginx-snippet.conf` in den vorhandenen HTTPS-Serverblock von `amp.example.com` einfügen. Die bestehende AMP-Konfiguration für `/` bleibt unverändert.
 
-   nginx -t
-   systemctl reload nginx
+Wichtig: Keine Zeile `proxy_cookie_path / /uebersicht/;` für das Dashboard verwenden. Der sichere Login-Cookie benötigt `Path=/`.
 
-Die Übersicht ist danach unter folgender Adresse erreichbar:
+Dann testen und neu laden:
+
+   nginx -t && systemctl reload nginx
+
+Die Übersicht ist danach unter dieser Beispieladresse erreichbar:
 
    https://amp.example.com/uebersicht/
 
@@ -45,12 +46,13 @@ Die Übersicht ist danach unter folgender Adresse erreichbar:
 
 - Oben rechts „Anmelden“ wählen.
 - Den ersten Server mit seiner AMP-Community-Adresse anlegen.
-- Optional die Spielserver-Adresse und den Port ergänzen. Das Abfrageprofil kann auf „Automatisch“ bleiben.
+- Optional mit Vollzugriff die Spielserver-Adresse und den Port ergänzen. Das Abfrageprofil kann auf „Automatisch“ bleiben.
+- Für einen öffentlichen Verbindungsbutton die gleichnamige Option beim Server bewusst aktivieren.
 - Unter „Überwachung“ optional SMTP mit STARTTLS einrichten und eine Test-E-Mail senden.
 
 Interne Spielserver
 
-Private Netzwerkadressen werden aus Sicherheitsgründen standardmäßig blockiert. Falls Spielserver bewusst im selben privaten Netzwerk liegen, in `/etc/systemd/system/amp-community-dashboard.service` diese Zeile anpassen:
+Private Netzwerkadressen sind standardmäßig blockiert. Falls Spielserver bewusst im selben privaten Netzwerk liegen, in `/etc/systemd/system/amp-community-dashboard.service` diese Zeile setzen:
 
    Environment=ALLOW_PRIVATE_NETWORKS=true
 
@@ -59,4 +61,4 @@ Danach:
    systemctl daemon-reload
    systemctl restart amp-community-dashboard
 
-Die Freigabe nur aktivieren, wenn interne Spielserver tatsächlich überwacht werden sollen.
+Diese Freigabe nur in einem vertrauenswürdigen Netzwerk aktivieren.

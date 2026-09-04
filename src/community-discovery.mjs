@@ -1,6 +1,7 @@
 import { request } from "node:https";
 import { isIP } from "node:net";
 import { resolveSafeTarget } from "./security.mjs";
+import { config } from "./config.mjs";
 import { cleanText, httpsUrl, validHost } from "./validation.mjs";
 
 const maximumBytes = 1_000_000;
@@ -78,13 +79,15 @@ export function extractCommunityData(html, communityUrl) {
 async function readPublicPage(rawUrl, allowPrivateNetworks) {
   const communityUrl = httpsUrl(rawUrl, "Die AMP-Community-Adresse", false);
   const url = new URL(communityUrl);
+  const port = Number(url.port || 443);
+  if (!config.communityAllowedPorts.has(port)) throw new Error("Der HTTPS-Port der Community-Seite ist nicht freigegeben.");
   const address = await resolveSafeTarget(url.hostname, allowPrivateNetworks);
   return new Promise((resolve, reject) => {
     let received = 0;
     const chunks = [];
     const requestOptions = {
-      protocol: "https:", hostname: url.hostname, port: Number(url.port || 443), path: `${url.pathname}${url.search}`,
-      method: "GET", headers: { Accept: "text/html,application/xhtml+xml", "User-Agent": "AMP-Community-Dashboard/2.1" },
+      protocol: "https:", hostname: url.hostname, port, path: `${url.pathname}${url.search}`,
+      method: "GET", maxHeaderSize: 8_192, headers: { Accept: "text/html,application/xhtml+xml", "Accept-Encoding": "identity", "User-Agent": "AMP-Community-Dashboard/2.1.1" },
       servername: isIP(url.hostname) ? undefined : url.hostname,
       lookup: (_hostname, _options, callback) => callback(null, address, isIP(address) || 4)
     };

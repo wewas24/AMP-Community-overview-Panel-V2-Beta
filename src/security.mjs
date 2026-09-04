@@ -1,103 +1,121 @@
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { promisify } from "node:util";
 
-export function passwordRecord(password) {
+const scryptAsync = promisify(scrypt);
+const scryptOptions = { N: 16_384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
+
+export async function passwordRecord(password) {
   const salt = randomBytes(16).toString("base64url");
-  return { salt, hash: scryptSync(password, salt, 64).toString("base64url") };
+  const hash = (await scryptAsync(password, salt, 64, scryptOptions)).toString("base64url");
+  return { salt, hash };
 }
 
-export function passwordMatches(password, record) {
-  if (!record?.salt || !record?.hash) return false;
-  const candidate = scryptSync(password, record.salt, 64).toString("base64url");
-  return candidate.length === record.hash.length && timingSafeEqual(Buffer.from(candidate), Buffer.from(record.hash));
+export async function passwordMatches(password, record) {
+  // Always derive a hash. Callers pass a fixed dummy record for unknown users,
+  // so an account name can never be inferred from the response time.
+  const salt = record?.salt || "0000000000000000000000";
+  const stored = record?.hash || "";
+  const candidate = (await scryptAsync(String(password || ""), salt, 64, scryptOptions)).toString("base64url");
+  return candidate.length === stored.length && Boolean(stored) && timingSafeEqual(Buffer.from(candidate), Buffer.from(stored));
 }
 
 export function tokenHash(token) {
   return createHash("sha256").update(token).digest("base64url");
 }
 
+export function secretHash(value) {
+  return createHash("sha256").update(String(value || "")).digest("base64url");
+}
+
 export function newSessionToken() {
   return randomBytes(32).toString("base64url");
 }
 
-export function isPrivateAddress(address) {
-  const value = String(address || "").toLowerCase().replace(/^\[|\]$/g, "");
-  if (isIP(value) === 4) {
-    const octets = value.split(".").map(Number);
-    const [first, second] = octets;
-    return first === 0 || first === 10 || first === 127 || (first === 100 && second >= 64 && second <= 127) || (first === 169 && second === 254) || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168);
-  }
-  if (isIP(value) === 6) {
-    if (value === "::" || value === "::1" || value.startsWith("fc") || value.startsWith("fd")) return true;
-    if (/^fe[89ab]/.test(value)) return true;
-    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(value);
-    return mapped ? isPrivateAddress(mapped[1]) : false;
-  }
-  return false;
+export function secureEqual(left, right) {
+  const a = Buffer.from(String(left || ""));
+  const b = Buffer.from(String(right || ""));
+  return a.length === b.length && a.length > 0 && timingSafeEqual(a, b);
 }
 
-export async function resolveSafeTarget(host, allowPrivateNetworks) {
-  const value = String(host || "").trim().replace(/^\[|\]$/g, "");
+function ipv4Octets(value) {
+  if (isIP(value) !== 4) return null;
+  return value.split(".").map(Number);
+}
+
+function isBlockedIpv4(value) {
+  const octets = ipv4Octets(value);
+  if (!octets) return false;
+  const [a, b, c] = octets;
+  // RFC 1918, loopback, link-local, carrier-grade NAT, documentation,
+  // benchmarking, multicast and all reserved/broadcast ranges.
+  return a === 0 || a === 10 || a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && (b === 0 || b === 168)) ||
+    (a === 192 && b === 88 && c === 99) ||
+    (a === 198 && (b === 18 || b === 19 || b === 51)) ||
+    (a === 203 && b === 0 && c === 113) ||
+    a >= 224;
+}
+
+function normalizedIpv6(value) {
+  return String(value || "").toLowerCase().replace(/^\[|\]$/g, "");
+}
+
+function mappedIpv4(value) {
+  const match = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(normalizedIpv6(value));
+  return match ? match[1] : null;
+}
+
+function isBlockedIpv6(value) {
+  const address = normalizedIpv6(value);
+  const mapped = mappedIpv4(address);
+  if (mapped) return isBlockedIpv4(mapped);
+  // Public IPv6 unicast addresses are within 2000::/3. Everything else is
+  // local, unique-local, link-local, multicast, documentation or reserved.
+  if (!/^[23]/.test(address)) return true;
+  return address.startsWith("2001:db8:");
+}
+
+export function isPrivateAddress(address) {
+  const value = String(address || "").trim().replace(/^\[|\]$/g, "");
+  if (isIP(value) === 4) return isBlockedIpv4(value);
+  if (isIP(value) === 6) return isBlockedIpv6(value);
+  return true;
+}
+
+export function isTrustedProxyAddress(address, trusted = []) {
+  const value = String(address || "").replace(/^::ffff:/i, "").replace(/^\[|\]$/g, "");
+  return trusted.some((entry) => String(entry).replace(/^::ffff:/i, "").replace(/^\[|\]$/g, "") === value);
+}
+
+function rejectedTarget(message, code = "PRIVATE_ADDRESS") {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+export async function resolveSafeTarget(host, allowPrivateNetworks = false) {
+  const value = String(host || "").trim().replace(/^\[|\]$/g, "").toLowerCase();
+  if (!value) throw rejectedTarget("Der Hostname fehlt.", "DNS_ERROR");
   if (isIP(value)) {
-    if (!allowPrivateNetworks && isPrivateAddress(value)) {
-      const error = new Error("Private oder lokale Netzwerkadressen sind nicht freigegeben.");
-      error.code = "PRIVATE_ADDRESS";
-      throw error;
-    }
+    if (isPrivateAddress(value) && !allowPrivateNetworks) throw rejectedTarget("Private, lokale oder reservierte Netzwerkadressen sind nicht freigegeben.");
     return value;
   }
   let addresses;
   try {
     addresses = await lookup(value, { all: true, verbatim: true });
   } catch {
-    const error = new Error("Der Hostname konnte nicht aufgelöst werden.");
-    error.code = "DNS_ERROR";
-    throw error;
+    throw rejectedTarget("Der Hostname konnte nicht aufgelöst werden.", "DNS_ERROR");
   }
-  if (!addresses.length || (!allowPrivateNetworks && addresses.some((item) => isPrivateAddress(item.address)))) {
-    const error = new Error("Der Hostname zeigt auf eine nicht freigegebene Adresse.");
-    error.code = "PRIVATE_ADDRESS";
-    throw error;
+  if (!addresses.length) throw rejectedTarget("Der Hostname konnte nicht aufgelöst werden.", "DNS_ERROR");
+  if (!allowPrivateNetworks && addresses.some((item) => isPrivateAddress(item.address))) {
+    throw rejectedTarget("Der Hostname zeigt auf eine nicht freigegebene Adresse.");
   }
+  // The caller must use this literal address for the immediately following
+  // connection. It deliberately must not hand the hostname to a socket again.
   return addresses[0].address;
-}
-
-export class LoginLimiter {
-  constructor() {
-    this.byIp = new Map();
-    this.byUser = new Map();
-    this.global = [];
-  }
-
-  cleanup(now) {
-    const keep = (entry) => entry.last > now - 5 * 60_000;
-    for (const map of [this.byIp, this.byUser]) for (const [key, value] of map) if (!keep(value)) map.delete(key);
-    this.global = this.global.filter((time) => time > now - 60_000);
-  }
-
-  retryAfter(ip, username) {
-    const now = Date.now();
-    this.cleanup(now);
-    if (this.global.length >= 50) return 60;
-    const entry = this.byIp.get(ip) || this.byUser.get(username);
-    if (!entry) return 0;
-    const waits = [1_000, 2_000, 5_000, 15_000, 60_000];
-    const required = waits[Math.min(entry.count - 1, waits.length - 1)];
-    return Math.max(0, Math.ceil((entry.last + required - now) / 1000));
-  }
-
-  failed(ip, username) {
-    const now = Date.now();
-    for (const [map, key] of [[this.byIp, ip], [this.byUser, username]]) {
-      const old = map.get(key);
-      map.set(key, { count: (old?.count || 0) + 1, last: now });
-    }
-    this.global.push(now);
-  }
-
-  succeeded(ip, username) {
-    this.byIp.delete(ip);
-    this.byUser.delete(username);
-  }
 }
