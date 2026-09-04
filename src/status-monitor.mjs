@@ -92,6 +92,77 @@ async function steamProbe(address, port) {
   return { ...first, ...steamInfo(first.response), response: undefined };
 }
 
+function writeVarInt(value) {
+  const bytes = [];
+  let current = Number(value) >>> 0;
+  do { const next = current & 0x7f; current >>>= 7; bytes.push(current ? next | 0x80 : next); } while (current);
+  return Buffer.from(bytes);
+}
+
+function readVarInt(buffer, start = 0) {
+  let value = 0;
+  for (let index = 0; index < 5; index += 1) {
+    const offset = start + index;
+    if (offset >= buffer.length) return null;
+    const byte = buffer[offset];
+    value |= (byte & 0x7f) << (7 * index);
+    if (!(byte & 0x80)) return { value, next: offset + 1 };
+  }
+  return { invalid: true };
+}
+
+function minecraftPacket(id, payload) {
+  const body = Buffer.concat([writeVarInt(id), payload]);
+  return Buffer.concat([writeVarInt(body.length), body]);
+}
+
+function minecraftResponse(buffer) {
+  const packetLength = readVarInt(buffer);
+  if (!packetLength || packetLength.invalid || buffer.length < packetLength.next + packetLength.value) return null;
+  const id = readVarInt(buffer, packetLength.next);
+  if (!id || id.invalid || id.value !== 0) return { invalid: true };
+  const textLength = readVarInt(buffer, id.next);
+  if (!textLength || textLength.invalid || textLength.value > 64_000 || buffer.length < textLength.next + textLength.value) return null;
+  try { return JSON.parse(buffer.subarray(textLength.next, textLength.next + textLength.value).toString("utf8")); } catch { return { invalid: true }; }
+}
+
+async function minecraftProbe(address, port, requestedHost = address) {
+  return new Promise((resolve) => {
+    const started = Date.now();
+    let settled = false;
+    let received = Buffer.alloc(0);
+    const socket = connect({ host: address, port });
+    const finish = (state, detail, extra = {}) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(stamp(state, detail, { latencyMs: Date.now() - started, ...extra }));
+    };
+    const timer = setTimeout(() => finish("TIMEOUT", "Die Minecraft-Statusabfrage hat nicht rechtzeitig geantwortet."), config.statusTimeoutMs);
+    timer.unref?.();
+    socket.once("error", () => finish("QUERY_FAILED", "Die Minecraft-Statusabfrage konnte nicht hergestellt werden."));
+    socket.once("connect", () => {
+      const hostname = Buffer.from(String(requestedHost).slice(0, 253), "utf8");
+      const portValue = Buffer.alloc(2); portValue.writeUInt16BE(port);
+      const handshake = Buffer.concat([writeVarInt(760), writeVarInt(hostname.length), hostname, portValue, writeVarInt(1)]);
+      socket.write(minecraftPacket(0, handshake));
+      socket.write(minecraftPacket(0, Buffer.alloc(0)));
+    });
+    socket.on("data", (chunk) => {
+      received = Buffer.concat([received, chunk]);
+      if (received.length > 65_536) return finish("QUERY_FAILED", "Die Minecraft-Statusantwort ist zu groß.");
+      const result = minecraftResponse(received);
+      if (!result) return;
+      if (result.invalid) return finish("QUERY_FAILED", "Die Antwort ist keine Minecraft-Statusantwort.");
+      const players = Number.isInteger(result.players?.online) ? result.players.online : null;
+      const maxPlayers = Number.isInteger(result.players?.max) ? result.players.max : null;
+      const version = typeof result.version?.name === "string" ? result.version.name.slice(0, 120) : null;
+      finish("ONLINE", "Der Minecraft-Java-Server antwortet auf die Statusabfrage.", { players, maxPlayers, version });
+    });
+  });
+}
+
 async function teamSpeakProbe(address, voicePort, queryPort) {
   return new Promise((resolve) => {
     let settled = false;
@@ -132,16 +203,24 @@ async function checkConnection(server, allowPrivateNetworks) {
   catch (error) { return stamp(error.code === "DNS_ERROR" ? "DNS_ERROR" : "QUERY_UNSUPPORTED", error.message); }
   const profile = server.connection.profile || "auto";
   if (profile === "teamspeak") return teamSpeakProbe(address, server.connection.port, server.connection.teamSpeakQueryPort);
-  const tcp = await tcpProbe(address, server.connection.port);
-  if (profile === "tcp") return tcp;
-  const steam = await steamProbe(address, server.connection.port);
-  if (steam.state === "ONLINE") return steam;
-  if (profile === "steam") return tcp.state === "ONLINE" ? tcp : steam;
-  if (server.connection.teamSpeakQueryPort || (server.connection.port >= 9987 && server.connection.port <= 9999)) {
-    const teamSpeak = await teamSpeakProbe(address, server.connection.port, server.connection.teamSpeakQueryPort);
-    if (teamSpeak.state === "ONLINE") return teamSpeak;
+  if (profile === "minecraft") return minecraftProbe(address, server.connection.port, server.connection.host);
+  const tcpPromise = tcpProbe(address, server.connection.port);
+  if (profile === "tcp") return tcpPromise;
+  const steamPromise = steamProbe(address, server.connection.port);
+  if (profile === "steam") {
+    const [steam, tcp] = await Promise.all([steamPromise, tcpPromise]);
+    return steam.state === "ONLINE" ? steam : tcp.state === "ONLINE" ? tcp : steam;
   }
-  return tcp.state === "ONLINE" ? tcp : steam.state === "TIMEOUT" ? tcp : steam;
+  const minecraftPromise = minecraftProbe(address, server.connection.port, server.connection.host);
+  const teamSpeakPromise = server.connection.teamSpeakQueryPort || (server.connection.port >= 9987 && server.connection.port <= 9999)
+    ? teamSpeakProbe(address, server.connection.port, server.connection.teamSpeakQueryPort) : null;
+  const [steam, minecraft, tcp, teamSpeak] = await Promise.all([steamPromise, minecraftPromise, tcpPromise, teamSpeakPromise]);
+  if (teamSpeak?.state === "ONLINE") return teamSpeak;
+  if (steam.state === "ONLINE") return steam;
+  if (minecraft.state === "ONLINE") return minecraft;
+  if (tcp.state === "ONLINE") return tcp;
+  if (tcp.state === "CONNECTION_REFUSED") return tcp;
+  return steam.state !== "TIMEOUT" ? steam : minecraft.state !== "TIMEOUT" ? minecraft : tcp;
 }
 
 export class StatusMonitor {

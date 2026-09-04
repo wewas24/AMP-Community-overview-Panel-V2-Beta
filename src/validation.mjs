@@ -1,7 +1,7 @@
 import { isIP } from "node:net";
 import { isPrivateAddress } from "./security.mjs";
 
-const profiles = new Set(["auto", "tcp", "steam", "teamspeak"]);
+const profiles = new Set(["auto", "tcp", "steam", "teamspeak", "minecraft"]);
 const visibilityValues = new Set(["public", "maintenance", "hidden", "disabled"]);
 
 export function cleanText(value, fallback = "", maximum = 255) {

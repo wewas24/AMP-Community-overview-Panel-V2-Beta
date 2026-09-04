@@ -1,4 +1,4 @@
-AMP Community Dashboard v2.0 – Update von v1
+AMP Community Dashboard v2.1 – Update
 
 Diese Anleitung verwendet ausschließlich Beispielwerte. Ersetze `amp.example.com` nur in deiner lokalen Nginx-Konfiguration.
 
@@ -6,24 +6,22 @@ Diese Anleitung verwendet ausschließlich Beispielwerte. Ersetze `amp.example.co
 
    cp -a /opt/amp-community-dashboard/data /opt/amp-community-dashboard/data.before-v2
 
-2. Node.js-Version prüfen. v2.0 benötigt Node.js 22 oder neuer:
+2. Node.js-Version prüfen. v2.1 benötigt Node.js 22 oder neuer:
 
    node --version
 
 3. Dienst anhalten und das Update-Paket hochladen:
 
    systemctl stop amp-community-dashboard
-   unzip -o /opt/amp-community-dashboard-v2.0-update.zip -d /opt/amp-community-dashboard
+   unzip -o /opt/amp-community-dashboard-v2.1.0-community-automation.zip -d /opt/amp-community-dashboard
    chown -R amp:amp /opt/amp-community-dashboard
 
-4. Dienstdatei aktualisieren, dann starten:
+4. Dienst wieder starten:
 
-   cp /opt/amp-community-dashboard/amp-community-dashboard.service /etc/systemd/system/amp-community-dashboard.service
-   systemctl daemon-reload
    systemctl start amp-community-dashboard
    systemctl status amp-community-dashboard --no-pager
 
-Beim ersten Start erstellt v2.0 automatisch `data/dashboard-v2.sqlite` und kopiert die v1-Daten dorthin. Die vorhandenen JSON-Dateien bleiben als Rückfall erhalten und werden zusätzlich in `data/backups/` gesichert.
+Beim ersten Start von v2 erstellt das Dashboard automatisch `data/dashboard-v2.sqlite` und kopiert vorhandene v1-Daten dorthin. Bei einem Update von v2.0 bleiben die vorhandene Datenbank und alle Einstellungen unverändert.
 
 5. Öffne anschließend:
 
@@ -34,6 +32,8 @@ Anschließend einmal neu anmelden. Vorhandene Administratorkonten, Server, Rolle
 Wichtig:
 
 - Das Update-Paket enthält keinen Datenordner und überschreibt deshalb keine Konfiguration.
+- Die vorhandene Systemdienst-Datei bleibt unverändert. Dadurch bleibt insbesondere eine bewusst gesetzte Freigabe für interne Spielserver erhalten.
 - Die neue Detailansicht lädt die AMP-Community-Seite erst nach Auswahl von „Details“.
+- Die neue Community-Erkennung liest nur öffentliche Daten aus. Bereits gespeicherte Spieladressen und Verbindungslinks werden nie automatisch überschrieben.
 - Für interne Spielserver darf `ALLOW_PRIVATE_NETWORKS=true` nur bewusst in der Systemdienst-Datei gesetzt werden.
 - Bei Problemen kann der Dienst gestoppt, die v1-Sicherung zurückkopiert und die vorherige v1-Version wieder eingespielt werden.

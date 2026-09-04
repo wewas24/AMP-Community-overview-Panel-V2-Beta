@@ -70,7 +70,8 @@ function connectAddress(server) {
   if (!connection) return "";
   const host = connection.host.includes(":") ? `[${connection.host}]` : connection.host;
   if (connection.profile === "teamspeak") return `ts3server://${host}?port=${connection.port}`;
-  return `steam://connect/${host}:${connection.port}`;
+  if (connection.profile === "steam") return `steam://connect/${host}:${connection.port}`;
+  return "";
 }
 function connectButton(server) {
   const href = server.connectUrl || connectAddress(server);
@@ -80,6 +81,20 @@ function connectButton(server) {
   link.rel = "noopener noreferrer";
   link.title = server.connectUrl ? "Verbindung mit dem Server herstellen" : "Öffnet die Standardverbindung für diese Serveradresse";
   return link;
+}
+function copyAddressButton(server) {
+  if (!server.connection || server.connectUrl || connectAddress(server)) return null;
+  const button = el("button", "button", "Adresse kopieren");
+  button.type = "button";
+  button.title = "Kopiert die Spielserver-Adresse für einen nicht standardisierten Client";
+  button.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(endpoint(server));
+      button.textContent = "Adresse kopiert";
+      window.setTimeout(() => { button.textContent = "Adresse kopieren"; }, 1_800);
+    } catch { button.textContent = "Kopieren nicht möglich"; }
+  });
+  return button;
 }
 
 function serverCard(server) {
@@ -98,7 +113,7 @@ function serverCard(server) {
   if (server.uptime?.day !== null && server.uptime?.day !== undefined) metrics.append(metric("Uptime 24 h", `${server.uptime.day} %`));
   if (metrics.children.length) card.append(metrics);
   const meta = el("p", "card-meta", `${relativeTime(server.status?.checkedAt)} geprüft${endpoint(server) ? ` · ${endpoint(server)}` : ""}`); meta.title = server.status?.detail || ""; card.append(meta);
-  const actions = el("div", "card-actions"); const connect = connectButton(server); if (connect) actions.append(connect); const details = el("button", "button secondary", "Details"); details.type = "button"; details.addEventListener("click", () => openDetails(server)); actions.append(details);
+  const actions = el("div", "card-actions"); const connect = connectButton(server); const copyAddress = copyAddressButton(server); if (connect) actions.append(connect); else if (copyAddress) actions.append(copyAddress); const details = el("button", "button secondary", "Details"); details.type = "button"; details.addEventListener("click", () => openDetails(server)); actions.append(details);
   if (server.links?.discord) actions.append(linkButton("Discord", server.links.discord)); if (server.links?.website) actions.append(linkButton("Webseite", server.links.website)); card.append(actions);
   return card;
 }
@@ -170,6 +185,78 @@ async function openAdmin() {
 }
 
 function setServerMessage(value = "", problem = false) { const node = $("#server-message"); node.textContent = value; node.classList.toggle("error", problem); }
+function discoveredConnect(value) {
+  try {
+    const url = new URL(value);
+    if (url.protocol === "steam:" && url.hostname.toLowerCase() === "connect") {
+      const match = /^\/?(?:\[([^\]]+)\]|([^/:]+)):(\d{1,5})$/.exec(decodeURIComponent(url.pathname));
+      if (match) return { connection: { host: match[1] || match[2], port: Number(match[3]), profile: "steam" }, connectUrl: url.toString(), source: "Connect-Link im Iframe" };
+    }
+    if (url.protocol === "ts3server:" && url.hostname) return { connection: { host: url.hostname, port: Number(url.searchParams.get("port") || url.port || 9987), profile: "teamspeak" }, connectUrl: url.toString(), source: "Connect-Link im Iframe" };
+    if (url.protocol === "minecraft:") {
+      const endpoint = url.searchParams.get("addExternalServer")?.split("|").at(-1) || "";
+      const match = /^(?:\[([^\]]+)\]|([^/:]+)):(\d{1,5})$/.exec(endpoint);
+      if (match) return { connection: { host: match[1] || match[2], port: Number(match[3]), profile: "minecraft" }, connectUrl: url.toString(), source: "Connect-Link im Iframe" };
+    }
+  } catch { /* ignored: this is only a same-origin fallback */ }
+  return null;
+}
+function applyDiscovery(found) {
+  const changes = [];
+  if (found.title && !$("#server-name").value.trim()) { field("#server-name", found.title); changes.push("Name"); }
+  if (found.connection?.host && !$("#server-host").value.trim()) { field("#server-host", found.connection.host); changes.push("Spieladresse"); }
+  if (found.connection?.port && !$("#server-port").value) { field("#server-port", found.connection.port); changes.push("Port"); }
+  if (found.connection?.profile && $("#server-profile").value === "auto") { field("#server-profile", found.connection.profile); changes.push("Abfrageprofil"); }
+  if (found.connectUrl && !$("#server-connect-url").value.trim()) { field("#server-connect-url", found.connectUrl); changes.push("Verbindungslink"); }
+  return changes;
+}
+async function sameOriginFrameDiscovery(communityUrl) {
+  let url;
+  try { url = new URL(communityUrl, window.location.href); } catch { return null; }
+  if (url.origin !== window.location.origin) return null;
+  return new Promise((resolve) => {
+    const frame = document.createElement("iframe");
+    let settled = false;
+    const finish = (value) => { if (settled) return; settled = true; window.clearTimeout(timeout); frame.remove(); resolve(value); };
+    const timeout = window.setTimeout(() => finish(null), 8_000);
+    frame.className = "community-probe-frame";
+    frame.title = "";
+    frame.addEventListener("load", () => window.setTimeout(() => {
+      try {
+        const links = [...(frame.contentDocument?.querySelectorAll("a[href]") || [])];
+        for (const link of links) { const found = discoveredConnect(link.href); if (found) return finish(found); }
+      } catch { /* foreign frames are intentionally not readable */ }
+      finish(null);
+    }, 350), { once: true });
+    frame.src = url.toString();
+    document.body.append(frame);
+  });
+}
+async function discoverServerAddress() {
+  const communityUrl = $("#server-community-url").value.trim();
+  if (!communityUrl) return setServerMessage("Bitte zuerst die AMP-Community-Adresse eintragen.", true);
+  const button = $("#discover-server");
+  button.disabled = true;
+  button.textContent = "Adresse wird ermittelt …";
+  setServerMessage();
+  try {
+    const response = await api("admin/servers/discover", { method: "POST", body: JSON.stringify({ communityUrl }) });
+    if (!response.ok) return setServerMessage(await message(response), true);
+    let found = await response.json();
+    let changes = applyDiscovery(found);
+    if (!found.connection && !found.connectUrl) {
+      const frameFound = await sameOriginFrameDiscovery(communityUrl);
+      if (frameFound) { found = { ...found, ...frameFound, found: true, confidence: "high" }; changes = applyDiscovery(found); }
+    }
+    if (changes.length) setServerMessage(`${found.source}: ${changes.join(", ")} übernommen. Bitte vor dem Speichern prüfen.`);
+    else setServerMessage("Kein öffentlicher Connect-Link gefunden. Adresse und Link können weiterhin manuell ergänzt werden.", true);
+  } catch (error) {
+    setServerMessage(error.message || "Die Community-Seite konnte nicht automatisch geprüft werden.", true);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Adresse automatisch ermitteln";
+  }
+}
 function resetServerForm() {
   $("#server-form").reset(); $("#server-id").value = ""; $("#server-category").value = "Allgemein"; $("#server-visibility").value = "public"; $("#server-profile").value = "auto"; $("#server-monitoring").checked = true; $("#display-players").checked = $("#display-ping").checked = $("#display-version").checked = true; $("#server-accent").value = "#42e8a5"; $("#server-options").open = false; text($("#server-form-title"), "Server schnell hinzufügen"); $("#cancel-edit").hidden = true; setServerMessage();
 }
@@ -226,6 +313,7 @@ $("#login-form").addEventListener("submit", async (event) => {
 });
 $("#logout-button").addEventListener("click", async () => { await api("logout", { method: "POST", body: "{}" }); admin = null; updateAdminUi(); $("#admin-dialog").close(); }); $$("#admin-tabs button").forEach((button) => button.addEventListener("click", () => switchPanel(button.dataset.panel))); $$("[data-form-tab]").forEach((button) => button.addEventListener("click", () => selectFormTab(button.dataset.formTab)));
 $("#cancel-edit").addEventListener("click", resetServerForm); $("#server-form").addEventListener("submit", async (event) => { event.preventDefault(); const id = $("#server-id").value; const response = await api(id ? `admin/servers/${id}` : "admin/servers", { method: id ? "PATCH" : "POST", body: JSON.stringify(serverPayload()) }); if (!response.ok) return setServerMessage(await message(response), true); setServerMessage("Server gespeichert."); resetServerForm(); await loadAdmin(); await loadPublic(); });
+$("#discover-server").addEventListener("click", discoverServerAddress);
 $("#test-server").addEventListener("click", async () => { const id = $("#server-id").value; if (!id) return setServerMessage("Bitte den Server zuerst speichern.", true); const response = await api(`admin/servers/${id}/test`, { method: "POST", body: "{}" }); if (!response.ok) return setServerMessage(await message(response), true); const result = await response.json(); setServerMessage(`${stateInfo(result.status).label}: ${result.status.detail}`); await loadAdmin(); await loadPublic(); });
 $("#settings-form").addEventListener("submit", async (event) => { event.preventDefault(); const response = await api("admin/settings", { method: "POST", body: JSON.stringify({ siteTitle: $("#setting-title").value, siteDescription: $("#setting-description").value, accentColor: $("#setting-accent").value, defaultDetailRefreshSeconds: Number($("#setting-detail-refresh").value), monitoringIntervalSeconds: Number($("#setting-monitor-interval").value) }) }); text($("#settings-message"), response.ok ? "Gespeichert." : await message(response)); if (response.ok) await loadPublic(); });
 $("#smtp-form").addEventListener("submit", async (event) => { event.preventDefault(); const response = await api("admin/settings", { method: "POST", body: JSON.stringify({ smtp: { host: $("#smtp-host").value, port: Number($("#smtp-port").value), username: $("#smtp-user").value, password: $("#smtp-password").value, from: $("#smtp-from").value, to: $("#smtp-to").value } }) }); text($("#smtp-message"), response.ok ? "E-Mail-Einstellungen gespeichert." : await message(response)); if (response.ok) await loadAdmin(); });

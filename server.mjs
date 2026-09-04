@@ -9,6 +9,7 @@ import { LoginLimiter, newSessionToken, passwordMatches, passwordRecord, tokenHa
 import { cleanText, normalizeServer, normalizeSettings, validPassword, validUsername } from "./src/validation.mjs";
 import { StatusMonitor } from "./src/status-monitor.mjs";
 import { sendEmail } from "./src/mail.mjs";
+import { discoverCommunity } from "./src/community-discovery.mjs";
 
 const contentTypes = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8", ".svg": "image/svg+xml" };
 const limiter = new LoginLimiter();
@@ -34,7 +35,7 @@ function publicServer(server, status) {
 function adminServer(server, status) { return { ...publicServer(server, status), monitoring: server.monitoring, connection: server.connection, createdAt: server.createdAt, updatedAt: server.updatedAt, sortOrder: server.sortOrder }; }
 
 function frameSources() {
-  const origins = new Set();
+  const origins = new Set(["'self'"]);
   for (const server of store.allServers()) {
     try { origins.add(new URL(server.communityUrl).origin); } catch { /* server is validated before storage */ }
   }
@@ -88,7 +89,7 @@ async function body(request, maximum = 128_000) {
 }
 
 function activityText(entries) {
-  const lines = ["AMP Community Dashboard v2.0 – Änderungsprotokoll", `Erstellt: ${new Date().toISOString()}`, "Aufbewahrung: sieben Tage", ""];
+  const lines = ["AMP Community Dashboard v2.1 – Änderungsprotokoll", `Erstellt: ${new Date().toISOString()}`, "Aufbewahrung: sieben Tage", ""];
   for (const entry of entries) lines.push(`${entry.created_at} · ${entry.username} · ${entry.action}${entry.subject ? ` · ${entry.subject}` : ""}${entry.detail ? ` – ${entry.detail}` : ""}`);
   return `${lines.join("\n")}\n`;
 }
@@ -168,6 +169,12 @@ async function api(request, response, url) {
     store.saveServer(next); store.addActivity(session.username, "Server erstellt", next.name); void monitor.refreshServer(next, true);
     return json(response, 201, { server: adminServer(next) });
   }
+  if (request.method === "POST" && remainder === "servers/discover") {
+    const input = await body(request, 8_192);
+    const result = await discoverCommunity(input?.communityUrl, config.allowPrivateNetworks);
+    store.addActivity(session.username, result.found ? "Spieladresse automatisch ermittelt" : "Keine Spieladresse auf Community-Seite gefunden", result.communityUrl, result.found ? "ok" : "error", result.source);
+    return json(response, 200, result);
+  }
   const serverId = /^servers\/([^/]+)$/.exec(remainder)?.[1];
   if (serverId && request.method === "PATCH") {
     const old = store.findServer(serverId); if (!old) return error(response, 404, "Server nicht gefunden.");
@@ -199,7 +206,7 @@ async function api(request, response, url) {
     const settings = normalizeSettings(await body(request, 16_384), store.getSettings(), config.defaultSmtpPort); store.saveSettings(settings); store.addActivity(session.username, "Seiteneinstellungen geändert"); return json(response, 200, adminSettings(settings));
   }
   if (request.method === "POST" && remainder === "notifications/test") {
-    const settings = store.getSettings(); await sendEmail(settings.smtp, "Test: AMP Community Dashboard v2.0", "Dies ist eine Test-E-Mail vom AMP Community Dashboard v2.0."); store.addActivity(session.username, "E-Mail-Test gesendet"); return json(response, 200, { ok: true });
+    const settings = store.getSettings(); await sendEmail(settings.smtp, "Test: AMP Community Dashboard v2.1", "Dies ist eine Test-E-Mail vom AMP Community Dashboard v2.1."); store.addActivity(session.username, "E-Mail-Test gesendet"); return json(response, 200, { ok: true });
   }
   if (request.method === "GET" && remainder === "admins") return json(response, 200, { admins: store.listAdmins() });
   if (request.method === "POST" && remainder === "admins") {
@@ -253,4 +260,4 @@ function scheduleMonitoring() {
 }
 void monitor.refresh();
 scheduleMonitoring();
-server.listen(config.port, config.host, () => console.log(`AMP Community Dashboard v2.0 läuft auf http://${config.host}:${config.port}`));
+server.listen(config.port, config.host, () => console.log(`AMP Community Dashboard v2.1 läuft auf http://${config.host}:${config.port}`));

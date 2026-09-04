@@ -1,4 +1,4 @@
-AMP Community Dashboard v2.0 – Installation für AMP mit Nginx
+AMP Community Dashboard v2.1 – Installation für AMP mit Nginx
 
 Diese Anleitung verwendet die Beispiel-Domain `amp.example.com`.
 
@@ -13,7 +13,7 @@ Voraussetzungen
 Das Paket nach `/opt/amp-community-dashboard` entpacken:
 
    mkdir -p /opt/amp-community-dashboard
-   unzip /opt/amp-community-dashboard-v2.0.zip -d /opt/amp-community-dashboard
+   unzip /opt/amp-community-dashboard-v2.1.zip -d /opt/amp-community-dashboard
    chown -R amp:amp /opt/amp-community-dashboard
 
 2. Erstes Administratorkonto erstellen
