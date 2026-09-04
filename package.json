@@ -1,0 +1,16 @@
+{
+  "name": "amp-community-dashboard-v2",
+  "version": "2.0.0",
+  "private": true,
+  "description": "AMP Community Dashboard v2.0 mit nativer Übersicht, AMP-Detailansichten und Statusmonitoring.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "create-admin": "node create-admin.mjs",
+    "test": "node --test test/*.test.mjs",
+    "check": "node --check server.mjs && node --check create-admin.mjs && node --check src/config.mjs && node --check src/security.mjs && node --check src/validation.mjs && node --check src/storage.mjs && node --check src/status-monitor.mjs && node --check src/mail.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -1,0 +1,20 @@
+[Unit]
+Description=AMP Community Dashboard v2.0
+After=network.target
+
+[Service]
+Type=simple
+User=amp
+WorkingDirectory=/opt/amp-community-dashboard
+Environment=HOST=127.0.0.1
+Environment=PORT=3100
+Environment=COOKIE_SECURE=true
+Environment=ALLOW_PRIVATE_NETWORKS=false
+ExecStart=/usr/bin/node server.mjs
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

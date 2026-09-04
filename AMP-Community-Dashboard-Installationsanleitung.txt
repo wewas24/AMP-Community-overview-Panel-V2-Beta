@@ -1,0 +1,62 @@
+AMP Community Dashboard v2.0 – Installation für AMP mit Nginx
+
+Diese Anleitung verwendet die Beispiel-Domain `amp.example.com`.
+
+Voraussetzungen
+
+- Eine laufende AMP-Installation hinter Nginx und HTTPS.
+- Node.js 22 oder neuer.
+- Root-Zugriff für die Installation.
+
+1. Dashboard ablegen
+
+Das Paket nach `/opt/amp-community-dashboard` entpacken:
+
+   mkdir -p /opt/amp-community-dashboard
+   unzip /opt/amp-community-dashboard-v2.0.zip -d /opt/amp-community-dashboard
+   chown -R amp:amp /opt/amp-community-dashboard
+
+2. Erstes Administratorkonto erstellen
+
+   cd /opt/amp-community-dashboard
+   sudo -u amp node create-admin.mjs
+
+3. Systemdienst einrichten
+
+   cp /opt/amp-community-dashboard/amp-community-dashboard.service /etc/systemd/system/amp-community-dashboard.service
+   systemctl daemon-reload
+   systemctl enable --now amp-community-dashboard
+   systemctl status amp-community-dashboard --no-pager
+
+Die Ausgabe muss `active (running)` zeigen.
+
+4. Nginx ergänzen
+
+In den vorhandenen HTTPS-Serverblock von `amp.example.com` den Inhalt von `nginx-snippet.conf` einfügen. Anschließend:
+
+   nginx -t
+   systemctl reload nginx
+
+Die Übersicht ist danach unter folgender Adresse erreichbar:
+
+   https://amp.example.com/uebersicht/
+
+5. Erste Einrichtung
+
+- Oben rechts „Anmelden“ wählen.
+- Den ersten Server mit seiner AMP-Community-Adresse anlegen.
+- Optional die Spielserver-Adresse und den Port ergänzen. Das Abfrageprofil kann auf „Automatisch“ bleiben.
+- Unter „Überwachung“ optional SMTP mit STARTTLS einrichten und eine Test-E-Mail senden.
+
+Interne Spielserver
+
+Private Netzwerkadressen werden aus Sicherheitsgründen standardmäßig blockiert. Falls Spielserver bewusst im selben privaten Netzwerk liegen, in `/etc/systemd/system/amp-community-dashboard.service` diese Zeile anpassen:
+
+   Environment=ALLOW_PRIVATE_NETWORKS=true
+
+Danach:
+
+   systemctl daemon-reload
+   systemctl restart amp-community-dashboard
+
+Die Freigabe nur aktivieren, wenn interne Spielserver tatsächlich überwacht werden sollen.

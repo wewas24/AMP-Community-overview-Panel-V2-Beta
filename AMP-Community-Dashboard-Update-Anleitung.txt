@@ -1,0 +1,39 @@
+AMP Community Dashboard v2.0 – Update von v1
+
+Diese Anleitung verwendet ausschließlich Beispielwerte. Ersetze `amp.example.com` nur in deiner lokalen Nginx-Konfiguration.
+
+1. Zuerst den bestehenden Datenordner sichern:
+
+   cp -a /opt/amp-community-dashboard/data /opt/amp-community-dashboard/data.before-v2
+
+2. Node.js-Version prüfen. v2.0 benötigt Node.js 22 oder neuer:
+
+   node --version
+
+3. Dienst anhalten und das Update-Paket hochladen:
+
+   systemctl stop amp-community-dashboard
+   unzip -o /opt/amp-community-dashboard-v2.0-update.zip -d /opt/amp-community-dashboard
+   chown -R amp:amp /opt/amp-community-dashboard
+
+4. Dienstdatei aktualisieren, dann starten:
+
+   cp /opt/amp-community-dashboard/amp-community-dashboard.service /etc/systemd/system/amp-community-dashboard.service
+   systemctl daemon-reload
+   systemctl start amp-community-dashboard
+   systemctl status amp-community-dashboard --no-pager
+
+Beim ersten Start erstellt v2.0 automatisch `data/dashboard-v2.sqlite` und kopiert die v1-Daten dorthin. Die vorhandenen JSON-Dateien bleiben als Rückfall erhalten und werden zusätzlich in `data/backups/` gesichert.
+
+5. Öffne anschließend:
+
+   https://amp.example.com/uebersicht/
+
+Anschließend einmal neu anmelden. Vorhandene Administratorkonten, Server, Rollen, Einstellungen und SMTP-Daten werden übernommen.
+
+Wichtig:
+
+- Das Update-Paket enthält keinen Datenordner und überschreibt deshalb keine Konfiguration.
+- Die neue Detailansicht lädt die AMP-Community-Seite erst nach Auswahl von „Details“.
+- Für interne Spielserver darf `ALLOW_PRIVATE_NETWORKS=true` nur bewusst in der Systemdienst-Datei gesetzt werden.
+- Bei Problemen kann der Dienst gestoppt, die v1-Sicherung zurückkopiert und die vorherige v1-Version wieder eingespielt werden.
