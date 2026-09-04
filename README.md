@@ -11,6 +11,8 @@ AMP Community Dashboard v2.0 ist eine schnelle öffentliche Übersicht für AMP-
 - Status-Queue mit begrenzter Parallelität, Fehlergründen, Statuscache, Historie und Uptime-Basis.
 - Öffentliche versionierte API unter `/api/v1/public/servers`.
 - Erweiterte Verwaltung: Tabs, Drag & Drop, Duplizieren, Verbindungstest, Branding, Links und Sichtbarkeiten.
+- Schnelles Hinzufügen mit Name und AMP-Adresse; weitere Angaben bleiben optional aufklappbar.
+- Verbindungsbutton auf Serverkarten: über einen eigenen Verbindungslink oder automatisch aus Spieladresse und Profil.
 - Automatisches Backup vor einem Import und schema-versionierte Exporte.
 - E-Mail-Benachrichtigungen über SMTP mit STARTTLS.
 

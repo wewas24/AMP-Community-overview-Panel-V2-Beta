@@ -1,6 +1,6 @@
 {
   "name": "amp-community-dashboard-v2",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "private": true,
   "description": "AMP Community Dashboard v2.0 mit nativer Übersicht, AMP-Detailansichten und Statusmonitoring.",
   "type": "module",

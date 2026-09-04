@@ -25,8 +25,8 @@ function adminSettings(settings) {
 function publicServer(server, status) {
   return {
     id: server.id, slug: server.slug, name: server.name, category: server.category, description: server.description,
-    notice: server.notice, visibility: server.visibility, communityUrl: server.communityUrl, iconUrl: server.iconUrl,
-    accentColor: server.accentColor, links: server.links, connection: server.connection ? { host: server.connection.host, port: server.connection.port } : null,
+    notice: server.notice, visibility: server.visibility, communityUrl: server.communityUrl, connectUrl: server.connectUrl || "", iconUrl: server.iconUrl,
+    accentColor: server.accentColor, links: server.links, connection: server.connection ? { host: server.connection.host, port: server.connection.port, profile: server.connection.profile || "auto" } : null,
     display: server.display, status: status || { state: "UNKNOWN", detail: "Noch nicht geprüft.", checkedAt: null }
   };
 }

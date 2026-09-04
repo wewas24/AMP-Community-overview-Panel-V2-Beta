@@ -73,6 +73,7 @@ function legacyServer(input, index) {
     notice: String(input?.notice || "").slice(0, 240),
     visibility: input?.visibility === "hidden" ? "hidden" : input?.visibility === "maintenance" ? "maintenance" : "public",
     communityUrl: String(input?.communityUrl || input?.url || ""),
+    connectUrl: String(input?.connectUrl || ""),
     iconUrl: "",
     accentColor: "",
     connection: connection?.host && connection?.port ? { host: connection.host, port: Number(connection.port), profile: connection.profile || (connection.serviceHint === "teamspeak" ? "teamspeak" : "auto"), teamSpeakQueryPort: connection.teamSpeakQueryPort || null } : null,

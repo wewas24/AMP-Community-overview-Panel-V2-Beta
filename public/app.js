@@ -65,6 +65,22 @@ function visibleServers() {
 
 function metric(label, value) { const box = el("div", "metric"); box.append(el("span", "", label), el("strong", "", value)); return box; }
 function linkButton(label, href) { const link = el("a", "button secondary", label); link.href = href; link.target = "_blank"; link.rel = "noopener noreferrer"; return link; }
+function connectAddress(server) {
+  const connection = server.connection;
+  if (!connection) return "";
+  const host = connection.host.includes(":") ? `[${connection.host}]` : connection.host;
+  if (connection.profile === "teamspeak") return `ts3server://${host}?port=${connection.port}`;
+  return `steam://connect/${host}:${connection.port}`;
+}
+function connectButton(server) {
+  const href = server.connectUrl || connectAddress(server);
+  if (!href) return null;
+  const link = el("a", "button", "Verbinden");
+  link.href = href;
+  link.rel = "noopener noreferrer";
+  link.title = server.connectUrl ? "Verbindung mit dem Server herstellen" : "Öffnet die Standardverbindung für diese Serveradresse";
+  return link;
+}
 
 function serverCard(server) {
   const card = el("article", "server-card"); card.style.setProperty("--card-accent", server.accentColor || "var(--accent)");
@@ -82,7 +98,7 @@ function serverCard(server) {
   if (server.uptime?.day !== null && server.uptime?.day !== undefined) metrics.append(metric("Uptime 24 h", `${server.uptime.day} %`));
   if (metrics.children.length) card.append(metrics);
   const meta = el("p", "card-meta", `${relativeTime(server.status?.checkedAt)} geprüft${endpoint(server) ? ` · ${endpoint(server)}` : ""}`); meta.title = server.status?.detail || ""; card.append(meta);
-  const actions = el("div", "card-actions"); const details = el("button", "button", "Details"); details.type = "button"; details.addEventListener("click", () => openDetails(server)); actions.append(details);
+  const actions = el("div", "card-actions"); const connect = connectButton(server); if (connect) actions.append(connect); const details = el("button", "button secondary", "Details"); details.type = "button"; details.addEventListener("click", () => openDetails(server)); actions.append(details);
   if (server.links?.discord) actions.append(linkButton("Discord", server.links.discord)); if (server.links?.website) actions.append(linkButton("Webseite", server.links.website)); card.append(actions);
   return card;
 }
@@ -155,15 +171,15 @@ async function openAdmin() {
 
 function setServerMessage(value = "", problem = false) { const node = $("#server-message"); node.textContent = value; node.classList.toggle("error", problem); }
 function resetServerForm() {
-  $("#server-form").reset(); $("#server-id").value = ""; $("#server-category").value = "Allgemein"; $("#server-visibility").value = "public"; $("#server-profile").value = "auto"; $("#server-monitoring").checked = true; $("#display-players").checked = $("#display-ping").checked = $("#display-version").checked = true; $("#server-accent").value = "#42e8a5"; text($("#server-form-title"), "Server hinzufügen"); $("#cancel-edit").hidden = true; setServerMessage();
+  $("#server-form").reset(); $("#server-id").value = ""; $("#server-category").value = "Allgemein"; $("#server-visibility").value = "public"; $("#server-profile").value = "auto"; $("#server-monitoring").checked = true; $("#display-players").checked = $("#display-ping").checked = $("#display-version").checked = true; $("#server-accent").value = "#42e8a5"; $("#server-options").open = false; text($("#server-form-title"), "Server schnell hinzufügen"); $("#cancel-edit").hidden = true; setServerMessage();
 }
 function field(id, value) { $(id).value = value ?? ""; }
 function editServer(server) {
-  field("#server-id", server.id); field("#server-name", server.name); field("#server-slug", server.slug); field("#server-category", server.category); field("#server-visibility", server.visibility); field("#server-description", server.description); field("#server-notice", server.notice); field("#server-community-url", server.communityUrl); field("#server-host", server.connection?.host); field("#server-port", server.connection?.port); field("#server-profile", server.connection?.profile || "auto"); field("#server-ts-query", server.connection?.teamSpeakQueryPort); $("#server-monitoring").checked = server.monitoring?.enabled !== false; field("#server-icon", server.iconUrl); field("#server-accent", server.accentColor || "#42e8a5");
+  field("#server-id", server.id); field("#server-name", server.name); field("#server-slug", server.slug); field("#server-category", server.category); field("#server-visibility", server.visibility); field("#server-description", server.description); field("#server-notice", server.notice); field("#server-community-url", server.communityUrl); field("#server-connect-url", server.connectUrl); field("#server-host", server.connection?.host); field("#server-port", server.connection?.port); field("#server-profile", server.connection?.profile || "auto"); field("#server-ts-query", server.connection?.teamSpeakQueryPort); $("#server-monitoring").checked = server.monitoring?.enabled !== false; field("#server-icon", server.iconUrl); field("#server-accent", server.accentColor || "#42e8a5"); $("#server-options").open = true;
   ["website", "discord", "wiki", "map", "modpack"].forEach((key) => field(`#link-${key}`, server.links?.[key])); $("#display-players").checked = server.display?.showPlayers !== false; $("#display-ping").checked = server.display?.showPing !== false; $("#display-version").checked = server.display?.showVersion !== false; text($("#server-form-title"), `„${server.name}“ bearbeiten`); $("#cancel-edit").hidden = false; switchPanel("servers"); window.setTimeout(() => $("#server-name").focus(), 0);
 }
 function serverPayload() {
-  return { name: $("#server-name").value, slug: $("#server-slug").value, category: $("#server-category").value, visibility: $("#server-visibility").value, description: $("#server-description").value, notice: $("#server-notice").value, communityUrl: $("#server-community-url").value, iconUrl: $("#server-icon").value, accentColor: $("#server-accent").value, connection: { host: $("#server-host").value, port: $("#server-port").value, profile: $("#server-profile").value, teamSpeakQueryPort: $("#server-ts-query").value }, monitoring: { enabled: $("#server-monitoring").checked }, links: Object.fromEntries(["website", "discord", "wiki", "map", "modpack"].map((key) => [key, $(`#link-${key}`).value])), display: { showPlayers: $("#display-players").checked, showPing: $("#display-ping").checked, showVersion: $("#display-version").checked } };
+  return { name: $("#server-name").value, slug: $("#server-slug").value, category: $("#server-category").value, visibility: $("#server-visibility").value, description: $("#server-description").value, notice: $("#server-notice").value, communityUrl: $("#server-community-url").value, connectUrl: $("#server-connect-url").value, iconUrl: $("#server-icon").value, accentColor: $("#server-accent").value, connection: { host: $("#server-host").value, port: $("#server-port").value, profile: $("#server-profile").value, teamSpeakQueryPort: $("#server-ts-query").value }, monitoring: { enabled: $("#server-monitoring").checked }, links: Object.fromEntries(["website", "discord", "wiki", "map", "modpack"].map((key) => [key, $(`#link-${key}`).value])), display: { showPlayers: $("#display-players").checked, showPing: $("#display-ping").checked, showVersion: $("#display-version").checked } };
 }
 function renderManagedServers() {
   const list = $("#server-list"); list.replaceChildren();

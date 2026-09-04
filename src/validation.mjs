@@ -51,6 +51,20 @@ export function httpsUrl(value, label, optional = true) {
   }
 }
 
+export function connectionLink(value, optional = true) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw && optional) return "";
+  try {
+    const url = new URL(raw);
+    // Browser game launchers commonly use their own schemes. Keep the list
+    // intentionally small so a stored link can never execute page script.
+    if (!["https:", "steam:", "ts3server:", "minecraft:"].includes(url.protocol) || url.username || url.password) throw new Error();
+    return url.toString();
+  } catch {
+    throw new Error("Der Verbindungslink muss mit https://, steam://, ts3server:// oder minecraft:// beginnen.");
+  }
+}
+
 export function emailAddress(value, label, optional = true) {
   const email = typeof value === "string" ? value.trim() : "";
   if (!email && optional) return "";
@@ -75,6 +89,7 @@ export function normalizeServer(input, existing = {}, sortOrder = 0, allowPrivat
     notice: cleanText(input?.notice, "", 240),
     visibility: visibilityValues.has(input?.visibility) ? input.visibility : "public",
     communityUrl: httpsUrl(input?.communityUrl || input?.url, "Die AMP-Community-Adresse", false),
+    connectUrl: connectionLink(input?.connectUrl, true),
     iconUrl,
     accentColor: /^#[0-9a-f]{6}$/i.test(input?.accentColor || "") ? input.accentColor : "",
     connection: connectionFromInput(input?.connection || { host: input?.connectionHost, port: input?.connectionPort, profile: input?.profile, teamSpeakQueryPort: input?.teamSpeakQueryPort }, allowPrivateNetworks),
