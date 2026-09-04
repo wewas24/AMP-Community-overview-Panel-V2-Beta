@@ -142,6 +142,17 @@ async function loadAdmin() {
   }
 }
 
+async function openAdmin() {
+  if (!admin) return $("#login-dialog").showModal();
+  text($("#admin-load-message"), "");
+  if (!$("#admin-dialog").open) $("#admin-dialog").showModal();
+  try {
+    await loadAdmin();
+  } catch (error) {
+    text($("#admin-load-message"), error.message || "Die Verwaltungsdaten konnten noch nicht geladen werden.");
+  }
+}
+
 function setServerMessage(value = "", problem = false) { const node = $("#server-message"); node.textContent = value; node.classList.toggle("error", problem); }
 function resetServerForm() {
   $("#server-form").reset(); $("#server-id").value = ""; $("#server-category").value = "Allgemein"; $("#server-visibility").value = "public"; $("#server-profile").value = "auto"; $("#server-monitoring").checked = true; $("#display-players").checked = $("#display-ping").checked = $("#display-version").checked = true; $("#server-accent").value = "#42e8a5"; text($("#server-form-title"), "Server hinzufügen"); $("#cancel-edit").hidden = true; setServerMessage();
@@ -177,7 +188,7 @@ function selectFormTab(tab) { $$("[data-form-panel]").forEach((panel) => { panel
 
 $("#search").addEventListener("input", renderServers); ["#category-filter", "#status-filter", "#sort-filter"].forEach((id) => $(id).addEventListener("change", renderServers)); $("#refresh-statuses").addEventListener("click", () => loadPublic().catch((error) => { text($("#live-label"), error.message); }));
 $("#close-details").addEventListener("click", closeDetails); $("#details-dialog").addEventListener("close", () => { if (activeDetails) closeDetails(); }); $("#detail-refresh").addEventListener("change", (event) => setDetailRefresh(event.target.value)); $("#refresh-detail").addEventListener("click", reloadDetail);
-$("#admin-button").addEventListener("click", async () => { if (!admin) return $("#login-dialog").showModal(); await loadAdmin(); $("#admin-dialog").showModal(); }); $("#close-login").addEventListener("click", () => $("#login-dialog").close()); $("#close-admin").addEventListener("click", () => $("#admin-dialog").close());
+$("#admin-button").addEventListener("click", openAdmin); $("#close-login").addEventListener("click", () => $("#login-dialog").close()); $("#close-admin").addEventListener("click", () => $("#admin-dialog").close());
 $("#login-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
@@ -186,11 +197,10 @@ $("#login-form").addEventListener("submit", async (event) => {
     if (!response.ok) return text($("#login-message"), await message(response));
     await loadSession();
     if (!admin) throw new Error("Die Anmeldung wurde nicht im Browser gespeichert. Bitte die Seite über HTTPS öffnen und die Browserdaten dieser Seite aktualisieren.");
-    await loadAdmin();
     event.currentTarget.reset();
     text($("#login-message"), "");
     $("#login-dialog").close();
-    $("#admin-dialog").showModal();
+    await openAdmin();
   } catch (error) {
     text($("#login-message"), error.message || "Die Verwaltung konnte nicht geladen werden.");
   }

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Schnelle Übersicht und Detailansichten für AMP-Community-Seiten." />
     <title>Meine Gameserver</title>
-    <link rel="stylesheet" href="app.css?v=2.0.1" />
+    <link rel="stylesheet" href="app.css?v=2.0.2" />
   </head>
   <body>
     <main class="shell">
@@ -41,6 +41,7 @@
 
     <dialog class="dialog admin-dialog" id="admin-dialog" aria-labelledby="admin-title">
       <header class="dialog-header"><div><p class="eyebrow" id="admin-role">VERWALTUNG</p><h2 id="admin-title">Dashboard-Verwaltung</h2></div><div class="dialog-actions"><button class="button secondary" id="logout-button" type="button">Abmelden</button><button class="icon-button" id="close-admin" type="button" aria-label="Verwaltung schließen">×</button></div></header>
+      <p class="message error admin-load-message" id="admin-load-message" role="alert" aria-live="polite"></p>
       <nav class="admin-tabs" id="admin-tabs" aria-label="Verwaltungsbereiche"><button data-panel="overview">Übersicht</button><button data-panel="servers">Server</button><button data-panel="settings">Webseite</button><button data-panel="monitoring">Überwachung</button><button data-panel="access">Sicherung & Zugänge</button><button data-panel="logs">Protokoll</button></nav>
       <section class="admin-panel" data-panel="overview"><div class="admin-summary" id="admin-summary"></div><h3>Letzte Änderungen</h3><div class="activity-list" id="admin-activity"></div></section>
       <section class="admin-panel" data-panel="servers" hidden>
@@ -59,6 +60,6 @@
       <section class="admin-panel" data-panel="access" hidden><h3>Sicherung</h3><p>Vor jedem Import wird automatisch eine Sicherung der aktuellen Konfiguration erstellt.</p><div class="form-actions"><button class="button secondary" id="export-backup" type="button">Sicherung herunterladen</button><label class="button warning" for="import-backup">Sicherung importieren</label><input class="visually-hidden" id="import-backup" type="file" accept="application/json,.json" /></div><p class="message" id="backup-message" aria-live="polite"></p><hr /><h3>Administratoren</h3><form id="admin-form" class="form-grid"><label>Benutzername<input id="new-admin-name" maxlength="32" required /></label><label>Passwort<input id="new-admin-password" type="password" minlength="12" required /></label><label>Rolle<select id="new-admin-role"><option value="editor">Serververwaltung</option><option value="auditor">Protokoll ansehen</option><option value="owner">Vollzugriff</option></select></label><div class="form-actions full"><button class="button" type="submit">Admin hinzufügen</button></div></form><p class="message error" id="admin-message" aria-live="polite"></p><div class="manage-list" id="admin-list"></div></section>
       <section class="admin-panel" data-panel="logs" hidden><h3>Änderungsprotokoll</h3><p>Die fünf neuesten Einträge werden angezeigt. Alle Einträge werden nach sieben Tagen automatisch gelöscht.</p><div class="activity-list" id="activity-list"></div><div class="form-actions"><button class="button secondary" id="download-log" type="button">Protokoll herunterladen</button></div></section>
     </dialog>
-    <script src="app.js?v=2.0.1"></script>
+    <script src="app.js?v=2.0.2"></script>
   </body>
 </html>
