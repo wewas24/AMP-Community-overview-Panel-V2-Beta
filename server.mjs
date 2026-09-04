@@ -230,7 +230,9 @@ async function staticFile(request, response, url) {
   try {
     const fileInfo = await stat(file); if (!fileInfo.isFile()) throw new Error();
     setHeaders(response, requested === "/index.html" ? frameSources() : "'none'");
-    response.writeHead(200, { "Content-Type": contentTypes[extname(file)] || "application/octet-stream", "Cache-Control": requested === "/index.html" ? "no-cache" : "public, max-age=86400" });
+    // Dashboard code must update immediately after a server-side update. The
+    // browser may cache static files, so always ask it to validate them first.
+    response.writeHead(200, { "Content-Type": contentTypes[extname(file)] || "application/octet-stream", "Cache-Control": "no-cache" });
     if (request.method === "HEAD") return response.end(); createReadStream(file).pipe(response);
   } catch { error(response, 404, "Nicht gefunden."); }
 }

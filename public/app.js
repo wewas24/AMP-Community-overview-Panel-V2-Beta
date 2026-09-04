@@ -178,7 +178,23 @@ function selectFormTab(tab) { $$("[data-form-panel]").forEach((panel) => { panel
 $("#search").addEventListener("input", renderServers); ["#category-filter", "#status-filter", "#sort-filter"].forEach((id) => $(id).addEventListener("change", renderServers)); $("#refresh-statuses").addEventListener("click", () => loadPublic().catch((error) => { text($("#live-label"), error.message); }));
 $("#close-details").addEventListener("click", closeDetails); $("#details-dialog").addEventListener("close", () => { if (activeDetails) closeDetails(); }); $("#detail-refresh").addEventListener("change", (event) => setDetailRefresh(event.target.value)); $("#refresh-detail").addEventListener("click", reloadDetail);
 $("#admin-button").addEventListener("click", async () => { if (!admin) return $("#login-dialog").showModal(); await loadAdmin(); $("#admin-dialog").showModal(); }); $("#close-login").addEventListener("click", () => $("#login-dialog").close()); $("#close-admin").addEventListener("click", () => $("#admin-dialog").close());
-$("#login-form").addEventListener("submit", async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const response = await api("login", { method: "POST", body: JSON.stringify({ username: form.get("username"), password: form.get("password") }) }); if (!response.ok) return text($("#login-message"), await message(response)); event.currentTarget.reset(); text($("#login-message"), ""); await loadSession(); await loadAdmin(); $("#login-dialog").close(); $("#admin-dialog").showModal(); });
+$("#login-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  try {
+    const response = await api("login", { method: "POST", body: JSON.stringify({ username: form.get("username"), password: form.get("password") }) });
+    if (!response.ok) return text($("#login-message"), await message(response));
+    await loadSession();
+    if (!admin) throw new Error("Die Anmeldung wurde nicht im Browser gespeichert. Bitte die Seite über HTTPS öffnen und die Browserdaten dieser Seite aktualisieren.");
+    await loadAdmin();
+    event.currentTarget.reset();
+    text($("#login-message"), "");
+    $("#login-dialog").close();
+    $("#admin-dialog").showModal();
+  } catch (error) {
+    text($("#login-message"), error.message || "Die Verwaltung konnte nicht geladen werden.");
+  }
+});
 $("#logout-button").addEventListener("click", async () => { await api("logout", { method: "POST", body: "{}" }); admin = null; updateAdminUi(); $("#admin-dialog").close(); }); $$("#admin-tabs button").forEach((button) => button.addEventListener("click", () => switchPanel(button.dataset.panel))); $$("[data-form-tab]").forEach((button) => button.addEventListener("click", () => selectFormTab(button.dataset.formTab)));
 $("#cancel-edit").addEventListener("click", resetServerForm); $("#server-form").addEventListener("submit", async (event) => { event.preventDefault(); const id = $("#server-id").value; const response = await api(id ? `admin/servers/${id}` : "admin/servers", { method: id ? "PATCH" : "POST", body: JSON.stringify(serverPayload()) }); if (!response.ok) return setServerMessage(await message(response), true); setServerMessage("Server gespeichert."); resetServerForm(); await loadAdmin(); await loadPublic(); });
 $("#test-server").addEventListener("click", async () => { const id = $("#server-id").value; if (!id) return setServerMessage("Bitte den Server zuerst speichern.", true); const response = await api(`admin/servers/${id}/test`, { method: "POST", body: "{}" }); if (!response.ok) return setServerMessage(await message(response), true); const result = await response.json(); setServerMessage(`${stateInfo(result.status).label}: ${result.status.detail}`); await loadAdmin(); await loadPublic(); });
