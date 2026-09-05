@@ -3,6 +3,8 @@ import { createReadStream } from "node:fs";
 import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
+import { gzip } from "node:zlib";
+import { promisify } from "node:util";
 import { config, permissionCodes, roles } from "./src/config.mjs";
 import { openStore } from "./src/storage.mjs";
 import { isTrustedProxyAddress, newSessionToken, passwordMatches, passwordRecord, resolveSafeTarget, secretHash, secureEqual, tokenHash } from "./src/security.mjs";
@@ -23,6 +25,9 @@ const store = await openStore();
 const dummyPasswordRecord = await passwordRecord("this-is-not-an-account-password");
 const sessionCookieName = config.cookieSecure ? "__Host-amp_dashboard_v2_session" : "amp_dashboard_v2_session";
 const publicDirectoryReal = await realpath(config.publicDirectory);
+const gzipAsync = promisify(gzip);
+const publicJsonCache = new Map();
+let publicResponseVersion = 0;
 
 function publicSettings(settings) {
   return { siteTitle: settings.siteTitle, siteDescription: settings.siteDescription, accentColor: settings.accentColor, defaultDetailRefreshSeconds: settings.defaultDetailRefreshSeconds };
@@ -79,6 +84,25 @@ function setHeaders(response, frames = "'none'") {
 }
 
 function json(response, status, body, headers = {}) { setHeaders(response); response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...headers }); response.end(JSON.stringify(body)); }
+function invalidatePublicResponses() { publicResponseVersion += 1; publicJsonCache.clear(); }
+function acceptsGzip(request) { return /(?:^|,)\s*gzip\s*(?:;|,|$)/i.test(String(request.headers["accept-encoding"] || "")); }
+async function publicJson(request, response, status, body, cacheName) {
+  const key = `${publicResponseVersion}:${cacheName}`;
+  let cached = publicJsonCache.get(key);
+  if (!cached) {
+    if (publicJsonCache.size >= 64) publicJsonCache.delete(publicJsonCache.keys().next().value);
+    cached = { raw: Buffer.from(JSON.stringify(body)), compressed: null };
+    publicJsonCache.set(key, cached);
+  }
+  const headers = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Vary": "Accept-Encoding" };
+  let content = cached.raw;
+  if (content.length >= 512 && acceptsGzip(request)) {
+    cached.compressed ||= gzipAsync(content, { level: 6 });
+    content = await cached.compressed;
+    headers["Content-Encoding"] = "gzip";
+  }
+  setHeaders(response); response.writeHead(status, headers); response.end(content);
+}
 function text(response, status, body, headers = {}) { setHeaders(response); response.writeHead(status, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", ...headers }); response.end(body); }
 function error(response, status, message) { json(response, status, { error: message }); }
 
@@ -205,6 +229,7 @@ async function sendRuleAlert(server, key, subject, message) {
 }
 
 async function observedStatus(server, status, saved) {
+  invalidatePublicResponses();
   if (saved?.metricsAdded) invalidateMetricsCache(server.id);
   const delta = statusDelta(server, status, saved);
   if (delta) {
@@ -328,6 +353,7 @@ function statusDelta(server, status, saved) {
 }
 
 function publishDashboard() {
+  invalidatePublicResponses();
   invalidateDashboardState();
   if (events.clientCount) events.publish("dashboard", dashboardPayload(), { key: "dashboard" });
 }
@@ -347,8 +373,8 @@ async function api(request, response, url) {
   if (request.method === "GET" && path === "/health") return json(response, 200, { ok: true, version: APP_VERSION, time: new Date().toISOString() });
   if (request.method === "GET" && path === "/ready") return json(response, 200, { ready: Boolean(store.db), monitoring: !monitor.stopped });
   if (request.method === "GET" && path === "/api/v1/public/events") { setHeaders(response); events.subscribe(request, response); return; }
-  if (request.method === "GET" && ["/api/v1/public/servers", "/api/servers"].includes(path)) return json(response, 200, dashboardPayload());
-  if (request.method === "GET" && path === "/api/v1/public/statuses") return json(response, 200, { statuses: [...store.allStatuses()].map(([id, status]) => ({ id, status })) });
+  if (request.method === "GET" && ["/api/v1/public/servers", "/api/servers"].includes(path)) return publicJson(request, response, 200, dashboardPayload(), path);
+  if (request.method === "GET" && path === "/api/v1/public/statuses") return publicJson(request, response, 200, { statuses: [...store.allStatuses()].map(([id, status]) => ({ id, status })) }, path);
   if (request.method === "GET" && path === "/api/v1/public/metrics") {
     const visible = new Set(store.allServers().filter((server) => server.visibility !== "hidden").map((server) => server.id));
     const requestedIds = String(url.searchParams.get("serverIds") || url.searchParams.get("serverId") || "").split(",").map((id) => id.trim()).filter(Boolean);
@@ -361,7 +387,7 @@ async function api(request, response, url) {
       const selected = pointLimit ? downsampleMetrics(points, pointLimit) : points;
       return [id, compact ? compactMetrics(selected) : selected];
     }));
-    return json(response, 200, compact ? { format: "compact-v1", columns: ["checkedAtMs", "latencyMs", "players", "maxPlayers"], metrics } : { metrics });
+    return publicJson(request, response, 200, compact ? { format: "compact-v1", columns: ["checkedAtMs", "latencyMs", "players", "maxPlayers"], metrics } : { metrics }, `${path}?${url.searchParams}`);
   }
   if (request.method === "GET" && path === "/api/v1/session") {
     const session = sessionFrom(request);
@@ -472,6 +498,7 @@ async function api(request, response, url) {
       await store.setWebhookUrls(webhookUrls);
     }
     const saved = store.saveSettings(settings); store.addActivity(session.username, "Seiteneinstellungen geändert");
+    invalidatePublicResponses();
     invalidateDashboardState();
     if (events.clientCount) events.publish("settings-updated", { version: APP_VERSION, settings: publicSettings(saved) }, { key: "settings" });
     return json(response, 200, await adminSettings(saved));

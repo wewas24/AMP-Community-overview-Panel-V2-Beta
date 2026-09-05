@@ -1,8 +1,8 @@
 {
   "name": "amp-community-dashboard-v2",
-  "version": "2.7.0",
+  "version": "2.8.0",
   "private": true,
-  "description": "AMP Community Dashboard v2.7.0 mit optimiertem Karten-Rendering und kompakter öffentlicher Metrik-API.",
+  "description": "AMP Community Dashboard v2.8.0 mit komprimierten öffentlichen API-Antworten und skalierbaren Live-Updates.",
   "type": "module",
   "scripts": {
     "start": "node server.mjs",

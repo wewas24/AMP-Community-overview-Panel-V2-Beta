@@ -8,8 +8,8 @@ work_directory="$(mktemp -d)"
 trap 'rm -rf "$work_directory"' EXIT
 
 command -v curl >/dev/null 2>&1 || { echo "curl fehlt." >&2; exit 1; }
-curl --silent --show-error --fail "$base_url/health" >/dev/null || { echo "Der Phase-0-Testdienst auf Port $port ist nicht erreichbar." >&2; exit 1; }
-metric_ids="$(curl --silent --show-error --fail "$base_url/api/v1/public/servers" | node --input-type=module -e 'let source = ""; process.stdin.on("data", (part) => { source += part; }); process.stdin.on("end", () => { console.log(JSON.parse(source).servers.slice(0, 6).map((server) => server.id).join(" ")); });')"
+curl --compressed --silent --show-error --fail "$base_url/health" >/dev/null || { echo "Der Phase-0-Testdienst auf Port $port ist nicht erreichbar." >&2; exit 1; }
+metric_ids="$(curl --compressed --silent --show-error --fail "$base_url/api/v1/public/servers" | node --input-type=module -e 'let source = ""; process.stdin.on("data", (part) => { source += part; }); process.stdin.on("end", () => { console.log(JSON.parse(source).servers.slice(0, 6).map((server) => server.id).join(" ")); });')"
 [[ -n "$metric_ids" ]] || { echo "Es konnten keine sichtbaren Testserver für Diagrammdaten bestimmt werden." >&2; exit 1; }
 metric_ids_csv="${metric_ids// /,}"
 
@@ -18,7 +18,7 @@ measure_endpoint() {
   local output="$work_directory/$(echo "$endpoint" | tr '/' '_').txt"
   : > "$output"
   for run in $(seq 1 10); do
-    curl --silent --show-error --output /dev/null \
+    curl --compressed --silent --show-error --output /dev/null \
       --write-out '%{http_code} %{time_total} %{size_download}\n' \
       "$base_url$endpoint" >> "$output"
   done
@@ -37,11 +37,11 @@ measure_parallel_initial_load() {
   started=$(date +%s%N)
   for client in $(seq 1 "$clients"); do
     (
-      curl --silent --show-error --output /dev/null --write-out '%{http_code} %{time_total} %{size_download}\n' "$base_url/api/v1/public/servers"
+      curl --compressed --silent --show-error --output /dev/null --write-out '%{http_code} %{time_total} %{size_download}\n' "$base_url/api/v1/public/servers"
       if [[ "$mode" == "advanced" ]]; then
         # One compact batch covers a two-column first screen plus the
         # preloading margin. The browser never requests all server histories.
-        curl --silent --show-error --output /dev/null --write-out '%{http_code} %{time_total} %{size_download}\n' "$base_url/api/v1/public/metrics?serverIds=$metric_ids_csv&points=120"
+        curl --compressed --silent --show-error --output /dev/null --write-out '%{http_code} %{time_total} %{size_download}\n' "$base_url/api/v1/public/metrics?serverIds=$metric_ids_csv&points=120"
       fi
     ) >> "$output" &
   done
@@ -60,7 +60,7 @@ measure_sse() {
   node "$(dirname "$0")/measure-sse.mjs" "$base_url"
 }
 
-echo "Phase-0-HTTP-Messung gegen $base_url"
+echo "Phase-0-HTTP-Messung gegen $base_url (komprimierte Browser-Übertragung)"
 echo "Einzelaufrufe:"
 measure_endpoint "/health"
 measure_endpoint "/api/v1/public/servers"

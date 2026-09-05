@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { gunzipSync } from "node:zlib";
 
 const projectDirectory = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const origin = "https://amp.example.test";
@@ -89,7 +90,8 @@ function call(port, path, { method = "GET", headers = {}, body } = {}) {
       const chunks = [];
       response.on("data", (chunk) => chunks.push(chunk));
       response.once("end", () => {
-        const text = Buffer.concat(chunks).toString("utf8");
+        const raw = Buffer.concat(chunks);
+        const text = (response.headers["content-encoding"] === "gzip" ? gunzipSync(raw) : raw).toString("utf8");
         let json = null;
         try { json = JSON.parse(text); } catch { /* not every response is JSON */ }
         resolveCall({ status: response.statusCode, headers: response.headers, text, json });
@@ -143,6 +145,10 @@ test("schützt einen laufenden Server gegen Brute Force, Session-Fixation, CSRF,
     assert.equal(publicServers.status, 200);
     assert.equal("connection" in publicServers.json.servers[0], false);
     assert.equal("monitoringTarget" in publicServers.json.servers[0], false);
+    const compressedPublicServers = await call(port, "/api/v1/public/servers", { headers: { ...forwardedHeaders(), "accept-encoding": "gzip" } });
+    assert.equal(compressedPublicServers.headers["content-encoding"], "gzip");
+    assert.match(String(compressedPublicServers.headers.vary), /accept-encoding/i);
+    assert.equal(compressedPublicServers.json.servers[0].name, "Öffentlicher Testserver");
 
     const auditor = await login(port, "auditor", "ein-sicheres-auditor-passwort", "198.51.100.99");
     assert.equal(auditor.status, 200);
