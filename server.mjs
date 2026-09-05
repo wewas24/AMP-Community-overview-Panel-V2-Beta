@@ -3,7 +3,7 @@ import { createReadStream } from "node:fs";
 import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
-import { config, permissions, roles } from "./src/config.mjs";
+import { config, permissionCodes, roles } from "./src/config.mjs";
 import { openStore } from "./src/storage.mjs";
 import { isTrustedProxyAddress, newSessionToken, passwordMatches, passwordRecord, resolveSafeTarget, secretHash, secureEqual, tokenHash } from "./src/security.mjs";
 import { normalizeServer, normalizeSettings, validPassword, validUsername } from "./src/validation.mjs";
@@ -111,13 +111,13 @@ function sessionFrom(request) {
   const active = store.getSession(tokenDigest, config.sessionIdleMs);
   if (!active) return null;
   const admin = store.getAdmin(active.username);
-  return admin ? { tokenHash: tokenDigest, username: admin.username, role: admin.role, csrfToken: active.csrf_token } : null;
+  return admin ? { tokenHash: tokenDigest, username: admin.username, role: admin.role, permissions: store.permissionsFor(admin), csrfToken: active.csrf_token } : null;
 }
 
 function requireSession(request, response, permission = null) {
   const session = sessionFrom(request);
   if (!session) { error(response, 401, "Bitte zuerst anmelden."); return null; }
-  if (permission && !permissions[session.role]?.has(permission)) { error(response, 403, "Deine Rolle hat keine Berechtigung für diese Aktion."); return null; }
+  if (permission && !session.permissions.has(permission)) { error(response, 403, "Deine Rolle hat keine Berechtigung für diese Aktion."); return null; }
   return session;
 }
 
@@ -140,7 +140,7 @@ async function body(request, maximum = 128_000) {
 }
 
 function activityText(entries) {
-  const lines = ["AMP Community Dashboard v2.2.0 – Änderungsprotokoll", `Erstellt: ${new Date().toISOString()}`, "Aufbewahrung: sieben Tage", ""];
+  const lines = ["AMP Community Dashboard v2.3.0 – Änderungsprotokoll", `Erstellt: ${new Date().toISOString()}`, "Aufbewahrung: sieben Tage", ""];
   for (const entry of entries) lines.push(`${entry.created_at} · ${entry.username} · ${entry.action}${entry.subject ? ` · ${entry.subject}` : ""}${entry.detail ? ` – ${entry.detail}` : ""}`);
   return `${lines.join("\n")}\n`;
 }
@@ -151,6 +151,8 @@ async function smtpSettings() {
 }
 
 async function statusChanged(server, status, kind) {
+  const rules = store.getSettings().notifications || {};
+  if ((kind === "offline" && rules.notifyOffline === false) || (kind === "recovered" && rules.notifyRecovered === false)) return;
   const subject = kind === "offline" ? `Server offline: ${server.name}` : `Server wieder online: ${server.name}`;
   try {
     const deliveries = await sendNotifications(subject, `Status: ${status.detail}\nGeprüft: ${status.checkedAt}`);
@@ -281,7 +283,7 @@ async function api(request, response, url) {
   }
   if (request.method === "GET" && path === "/api/v1/session") {
     const session = sessionFrom(request);
-    return json(response, 200, { authenticated: Boolean(session), username: session?.username || null, role: session?.role || null, csrfToken: session?.csrfToken || null });
+    return json(response, 200, { authenticated: Boolean(session), username: session?.username || null, role: session?.role || null, permissions: session ? [...session.permissions] : [], csrfToken: session?.csrfToken || null });
   }
   if (request.method === "POST" && path === "/api/v1/login") {
     if (!sameOrigin(request)) return error(response, 403, "Die Sicherheitsprüfung der Anfrage ist fehlgeschlagen.");
@@ -313,7 +315,7 @@ async function api(request, response, url) {
 
   if (request.method === "GET" && remainder === "dashboard") {
     const overview = dashboardPayload();
-    return json(response, 200, { ...overview, activity: store.latestActivity(5), uptime: Object.fromEntries(overview.servers.map((server) => [server.id, server.uptime])) });
+    return json(response, 200, { ...overview, activity: session.permissions.has("logs.read") ? store.latestActivity(5) : [], uptime: Object.fromEntries(overview.servers.map((server) => [server.id, server.uptime])) });
   }
   if (request.method === "GET" && remainder === "servers") return json(response, 200, { servers: store.allServers().map((server) => adminServer(server, store.allStatuses().get(server.id))) });
   if (request.method === "POST" && remainder === "servers") {
@@ -390,7 +392,7 @@ async function api(request, response, url) {
     const saved = store.saveSettings(settings); store.addActivity(session.username, "Seiteneinstellungen geändert"); events.publish("dashboard", dashboardPayload()); return json(response, 200, await adminSettings(saved));
   }
   if (request.method === "POST" && remainder === "notifications/test") {
-    const deliveries = await sendNotifications("Test: AMP Community Dashboard v2.2.0", "Dies ist eine Testbenachrichtigung vom AMP Community Dashboard.");
+    const deliveries = await sendNotifications("Test: AMP Community Dashboard v2.3.0", "Dies ist eine Testbenachrichtigung vom AMP Community Dashboard.");
     if (!deliveries.length) return error(response, 400, "Es ist kein funktionierender SMTP- oder Webhook-Kanal eingerichtet.");
     store.addActivity(session.username, "Benachrichtigungstest gesendet", "", "ok", deliveries.join(", ")); return json(response, 200, { ok: true });
   }
@@ -399,13 +401,19 @@ async function api(request, response, url) {
     const input = await body(request, 8_192); const username = String(input?.username || "").trim(); const role = roles.has(input?.role) ? input.role : "editor";
     if (!validUsername(username) || !validPassword(input?.password)) return error(response, 400, "Benutzername oder Passwort erfüllt die Anforderungen nicht.");
     if (store.getAdmin(username)) return error(response, 409, "Dieser Benutzername ist bereits vergeben.");
-    store.addAdmin({ username, ...(await passwordRecord(input.password)), role, createdAt: new Date().toISOString() }); store.addActivity(session.username, "Administratorkonto erstellt", username); return json(response, 201, { ok: true });
+    const customPermissions = Array.isArray(input?.customPermissions) ? input.customPermissions.filter((value) => permissionCodes.includes(value)) : [];
+    if (role === "custom" && !customPermissions.length) return error(response, 400, "Für eine benutzerdefinierte Rolle muss mindestens eine Berechtigung gewählt werden.");
+    store.addAdmin({ username, ...(await passwordRecord(input.password)), role, createdAt: new Date().toISOString() });
+    if (role === "custom") store.setAdminPermissions(username, customPermissions);
+    store.addActivity(session.username, "Administratorkonto erstellt", username, "ok", role === "custom" ? "Benutzerdefinierte Rolle" : role); return json(response, 201, { ok: true });
   }
   const adminName = /^admins\/([^/]+)$/.exec(remainder)?.[1];
   if (adminName && request.method === "PATCH") {
     const name = decodeURIComponent(adminName); const input = await body(request);
     if (name === session.username || !roles.has(input?.role) || !store.getAdmin(name)) return error(response, 400, "Diese Administratorrolle kann nicht geändert werden.");
-    store.updateAdminRole(name, input.role); store.removeSessionsFor(name); store.addActivity(session.username, "Administratorrolle geändert", name); return json(response, 200, { ok: true });
+    const customPermissions = Array.isArray(input?.customPermissions) ? input.customPermissions.filter((value) => permissionCodes.includes(value)) : [];
+    if (input.role === "custom" && !customPermissions.length) return error(response, 400, "Für eine benutzerdefinierte Rolle muss mindestens eine Berechtigung gewählt werden.");
+    store.updateAdminRole(name, input.role); store.setAdminPermissions(name, input.role === "custom" ? customPermissions : []); store.removeSessionsFor(name); store.addActivity(session.username, "Administratorrolle geändert", name); return json(response, 200, { ok: true });
   }
   if (adminName && request.method === "DELETE") { const name = decodeURIComponent(adminName); if (name === session.username || store.adminCount() <= 1) return error(response, 400, "Dieses Konto kann nicht entfernt werden."); store.removeAdmin(name); store.removeSessionsFor(name); store.addActivity(session.username, "Administratorkonto entfernt", name); return json(response, 200, { ok: true }); }
   if (request.method === "GET" && remainder === "activity") return json(response, 200, { entries: store.latestActivity(5) });
@@ -477,7 +485,7 @@ function scheduleMonitoring() {
 }
 void monitor.refresh();
 scheduleMonitoring();
-server.listen(config.port, config.host, () => console.log(`AMP Community Dashboard v2.2.0 läuft auf http://${config.host}:${config.port}`));
+server.listen(config.port, config.host, () => console.log(`AMP Community Dashboard v2.3.0 läuft auf http://${config.host}:${config.port}`));
 
 let shuttingDown = false;
 async function shutdown() {

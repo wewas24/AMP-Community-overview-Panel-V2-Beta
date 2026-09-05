@@ -144,6 +144,8 @@ export function normalizeSettings(input, previous, defaultSmtpPort) {
   const notifications = input?.notifications && typeof input.notifications === "object" ? input.notifications : {};
   next.notifications = {
     ...previous.notifications,
+    notifyOffline: notifications.notifyOffline === undefined ? previous.notifications?.notifyOffline !== false : notifications.notifyOffline === true,
+    notifyRecovered: notifications.notifyRecovered === undefined ? previous.notifications?.notifyRecovered !== false : notifications.notifyRecovered === true,
     latencyThresholdMs: notifications.latencyThresholdMs === undefined ? previous.notifications?.latencyThresholdMs || 0 : Math.max(0, Math.min(60_000, Number(notifications.latencyThresholdMs) || 0)),
     outageMinutes: notifications.outageMinutes === undefined ? previous.notifications?.outageMinutes || 0 : Math.max(0, Math.min(24 * 60, Number(notifications.outageMinutes) || 0))
   };

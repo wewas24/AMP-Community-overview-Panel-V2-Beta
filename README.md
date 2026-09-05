@@ -1,8 +1,8 @@
-# AMP Community Dashboard v2.2.0
+# AMP Community Dashboard v2.3.0
 
 Eine öffentliche Übersicht für AMP-Community-Seiten. Die AMP-Seite bleibt die vollständige Detailansicht; das Dashboard bündelt Status, Hinweise, Health-Werte und bewusst freigegebene Verbindungslinks.
 
-## Funktionen in v2.2
+## Funktionen
 
 - Live-Aktualisierung mit Server-Sent Events (SSE), ohne Browser-Polling von Spielservern.
 - Öffentliche versionierte API: `GET /api/v1/public/servers`, `GET /api/v1/public/metrics` und `GET /api/v1/public/events`.
@@ -14,6 +14,15 @@ Eine öffentliche Übersicht für AMP-Community-Seiten. Die AMP-Seite bleibt die
 - Sichere Banner-Uploads (PNG, JPEG, WebP bis 2 MB), helles/dunkles Design und installierbare PWA für Mobilgeräte.
 - SMTP mit STARTTLS, bis zu fünf sichere HTTPS-Webhooks (z. B. Discord), Meldungen bei Statuswechseln, hoher Latenz und längerem Ausfall.
 - Bereits vorhandene Konten, Server und Daten bleiben beim Update erhalten.
+
+## Einfache Bedienung in v2.3
+
+- Die Verwaltung startet im einfachen Modus: sichtbar sind nur Dashboard, Server, Benachrichtigungen und Einstellungen.
+- Einen Server legst du mit Name, AMP-Community-Adresse, „Server erkennen“ und „Speichern“ an. Spielserver-, Monitoring- und Protokollangaben sind unter „Erweiterte Einstellungen“ verborgen.
+- Serverkarten zeigen im Standard nur Status, Spieler, Latenz und klare Aktionen „Öffnen“ und „Details“. Health-Werte, Diagramme und technische Hinweise erscheinen nur im erweiterten Modus.
+- Einstellungen bündeln Allgemein, Benutzer, Berechtigungen, Änderungsprotokoll, Sicherungen und Systemstatus. Nicht berechtigte Bereiche werden nicht angezeigt.
+- Rollen heißen Administrator, Moderator, Support, Nur ansehen oder Benutzerdefiniert. Jede Berechtigung wird weiterhin auf dem Server geprüft.
+- Beim ersten leeren Dashboard erscheint ein überspringbarer Schnellstart-Assistent.
 
 ## Voraussetzungen
 
@@ -39,7 +48,7 @@ Es werden keine zusätzlichen npm-Pakete benötigt.
 
    ```bash
    sudo mkdir -p /opt/amp-community-dashboard
-   sudo unzip /opt/amp-community-dashboard-v2.2.0-live-monitoring.zip -d /opt/amp-community-dashboard
+   sudo unzip /opt/amp-community-dashboard-v2.3.0-simple-ui.zip -d /opt/amp-community-dashboard
    sudo useradd --system --home /opt/amp-community-dashboard --shell /usr/sbin/nologin amp 2>/dev/null || true
    sudo chown -R amp:amp /opt/amp-community-dashboard
    ```
@@ -69,20 +78,20 @@ Es werden keine zusätzlichen npm-Pakete benötigt.
 
 Die Übersicht ist dann beispielsweise unter `https://amp.example.com/uebersicht/` verfügbar.
 
-## Update auf v2.2.0
+## Update auf v2.3.0
 
 1. Dienst stoppen und den vollständigen bisherigen Ordner sichern:
 
    ```bash
    sudo systemctl stop amp-community-dashboard
-   sudo cp -a /opt/amp-community-dashboard /opt/amp-community-dashboard-before-v2.2.0
+   sudo cp -a /opt/amp-community-dashboard /opt/amp-community-dashboard-before-v2.3.0
    ```
 
 2. Das Paket in einen temporären Ordner entpacken. Anschließend alle Dateien **außer** `data/` in den bestehenden Projektordner kopieren. `data/` weder löschen noch überschreiben.
 
    ```bash
    sudo mkdir -p /opt/amp-dashboard-update
-   sudo unzip -o /opt/amp-community-dashboard-v2.2.0-live-monitoring.zip -d /opt/amp-dashboard-update
+   sudo unzip -o /opt/amp-community-dashboard-v2.3.0-simple-ui.zip -d /opt/amp-dashboard-update
    sudo rsync -a --exclude=data/ /opt/amp-dashboard-update/ /opt/amp-community-dashboard/
    sudo chown -R amp:amp /opt/amp-community-dashboard
    ```

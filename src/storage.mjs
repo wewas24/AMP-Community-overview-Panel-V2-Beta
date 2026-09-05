@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { chmod, copyFile, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { config, roles } from "./config.mjs";
+import { config, permissionCodes, permissions, roles } from "./config.mjs";
 import { slugify } from "./validation.mjs";
 
 const schema = `
@@ -16,6 +16,11 @@ CREATE TABLE IF NOT EXISTS servers (
 CREATE TABLE IF NOT EXISTS admins (
   username TEXT PRIMARY KEY, salt TEXT NOT NULL, hash TEXT NOT NULL,
   role TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS admin_permissions (
+  username TEXT NOT NULL, permission TEXT NOT NULL,
+  PRIMARY KEY(username, permission),
+  FOREIGN KEY(username) REFERENCES admins(username) ON DELETE CASCADE
 );
 CREATE TABLE IF NOT EXISTS sessions (
   token_hash TEXT PRIMARY KEY, username TEXT NOT NULL, created_at INTEGER NOT NULL,
@@ -68,7 +73,7 @@ function defaultSettings() {
     defaultDetailRefreshSeconds: config.defaultRefreshSeconds,
     monitoringIntervalSeconds: config.defaultMonitorSeconds,
     smtp: { host: "", port: config.defaultSmtpPort, username: "", from: "", to: "" },
-    notifications: { latencyThresholdMs: 0, outageMinutes: 0 }
+    notifications: { notifyOffline: true, notifyRecovered: true, latencyThresholdMs: 0, outageMinutes: 0 }
   };
 }
 
@@ -330,10 +335,30 @@ export class Store {
   latestActivity(limit = 5) { return this.db.prepare("SELECT * FROM activity_log ORDER BY created_at DESC LIMIT ?").all(limit); }
   allActivity() { return this.db.prepare("SELECT * FROM activity_log ORDER BY created_at DESC").all(); }
 
-  listAdmins() { return this.db.prepare("SELECT username,role,created_at FROM admins ORDER BY username COLLATE NOCASE").all().map((item) => ({ username: item.username, role: item.role, createdAt: item.created_at })); }
+  permissionsFor(admin) {
+    if (!admin) return new Set();
+    if (admin.role !== "custom") return new Set(permissions[admin.role] || []);
+    return new Set(this.db.prepare("SELECT permission FROM admin_permissions WHERE username = ?").all(admin.username).map((item) => item.permission).filter((permission) => permissionCodes.includes(permission)));
+  }
+
+  listAdmins() {
+    return this.db.prepare("SELECT username,role,created_at FROM admins ORDER BY username COLLATE NOCASE").all().map((item) => ({
+      username: item.username, role: item.role, createdAt: item.created_at, permissions: [...this.permissionsFor(item)]
+    }));
+  }
   getAdmin(username) { return this.db.prepare("SELECT * FROM admins WHERE username = ?").get(username) || null; }
   addAdmin(admin) { this.db.prepare("INSERT INTO admins(username,salt,hash,role,created_at) VALUES(:username,:salt,:hash,:role,:createdAt)").run(admin); }
   updateAdminRole(username, role) { this.db.prepare("UPDATE admins SET role = ? WHERE username = ?").run(role, username); }
+  setAdminPermissions(username, values) {
+    const allowed = [...new Set(Array.isArray(values) ? values.filter((value) => permissionCodes.includes(value)) : [])];
+    this.db.exec("BEGIN");
+    try {
+      this.db.prepare("DELETE FROM admin_permissions WHERE username = ?").run(username);
+      const statement = this.db.prepare("INSERT INTO admin_permissions(username,permission) VALUES(?,?)");
+      allowed.forEach((permission) => statement.run(username, permission));
+      this.db.exec("COMMIT");
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+  }
   removeAdmin(username) { this.db.prepare("DELETE FROM admins WHERE username = ?").run(username); }
   adminCount() { return Number(this.db.prepare("SELECT count(*) AS count FROM admins").get().count); }
 

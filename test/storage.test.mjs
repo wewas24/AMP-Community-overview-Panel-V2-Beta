@@ -35,6 +35,9 @@ test("speichert Statusdaten ohne interne Probe-Antwort", async () => {
     assert.equal(repeated.changed, false);
     assert.equal(store.db.prepare("SELECT count(*) AS count FROM status_history WHERE server_id = ?").get("server-1").count, 1);
     assert.equal(store.metrics("server-1", 24).length, 1);
+    store.addAdmin({ username: "custom-user", salt: "salt", hash: "hash", role: "custom", createdAt: timestamp });
+    store.setAdminPermissions("custom-user", ["dashboard.read", "servers.write", "not-a-permission"]);
+    assert.deepEqual([...store.permissionsFor(store.getAdmin("custom-user"))].sort(), ["dashboard.read", "servers.write"]);
     await store.setSmtpPassword("nur-in-der-secret-datei");
     const exported = store.exportData();
     assert.equal(JSON.stringify(exported).includes("nur-in-der-secret-datei"), false);

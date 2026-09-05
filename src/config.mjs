@@ -39,11 +39,14 @@ export const config = {
   communityAllowedPorts: new Set((process.env.COMMUNITY_ALLOWED_PORTS || "443,8443").split(",").map((value) => Number(value.trim())).filter((value) => Number.isInteger(value) && value > 0 && value <= 65535))
 };
 
-export const roles = new Set(["owner", "editor", "auditor"]);
+export const permissionCodes = ["dashboard.read", "servers.read", "servers.write", "servers.test", "servers.discover", "settings.write", "notifications.test", "access.write", "logs.read", "logs.export", "backup.export", "backup.import"];
+export const roles = new Set(["owner", "editor", "support", "auditor", "custom"]);
 export const permissions = {
   owner: new Set(["dashboard.read", "servers.read", "servers.write", "servers.test", "servers.discover", "settings.write", "notifications.test", "access.write", "logs.read", "logs.export", "backup.export", "backup.import"]),
   editor: new Set(["servers.read", "servers.write"]),
-  auditor: new Set(["logs.read"])
+  support: new Set(["dashboard.read", "servers.read", "logs.read"]),
+  auditor: new Set(["dashboard.read"]),
+  custom: new Set()
 };
 
 export const publicStates = new Set(["ONLINE", "OFFLINE", "TIMEOUT", "CONNECTION_REFUSED", "DNS_ERROR", "QUERY_FAILED", "QUERY_UNSUPPORTED", "MAINTENANCE", "DISABLED", "UNKNOWN"]);
