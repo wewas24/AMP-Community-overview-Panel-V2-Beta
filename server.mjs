@@ -16,7 +16,7 @@ import { sameOriginValues, validMutationRequest } from "./src/request-guards.mjs
 import { permissionFor, hasPermission } from "./src/permissions.mjs";
 import { isUploadFilename, parseUploadedImage } from "./src/uploads.mjs";
 import { APP_VERSION } from "./src/version.mjs";
-import { downsampleMetrics } from "./src/metrics.mjs";
+import { compactMetrics, downsampleMetrics } from "./src/metrics.mjs";
 
 const contentTypes = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".webmanifest": "application/manifest+json; charset=utf-8" };
 const store = await openStore();
@@ -355,11 +355,13 @@ async function api(request, response, url) {
     const ids = requestedIds.length ? [...new Set(requestedIds)].slice(0, 12).filter((id) => visible.has(id)) : [...visible];
     const requestedPoints = Number(url.searchParams.get("points"));
     const pointLimit = Number.isInteger(requestedPoints) && requestedPoints >= 8 && requestedPoints <= 120 ? requestedPoints : null;
+    const compact = url.searchParams.get("format") === "compact";
     const metrics = Object.fromEntries(ids.map((id) => {
       const points = cachedMetrics(id, 24);
-      return [id, pointLimit ? downsampleMetrics(points, pointLimit) : points];
+      const selected = pointLimit ? downsampleMetrics(points, pointLimit) : points;
+      return [id, compact ? compactMetrics(selected) : selected];
     }));
-    return json(response, 200, { metrics });
+    return json(response, 200, compact ? { format: "compact-v1", columns: ["checkedAtMs", "latencyMs", "players", "maxPlayers"], metrics } : { metrics });
   }
   if (request.method === "GET" && path === "/api/v1/session") {
     const session = sessionFrom(request);

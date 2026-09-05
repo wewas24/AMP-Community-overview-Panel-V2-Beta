@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { downsampleMetrics } from "../src/metrics.mjs";
+import { compactMetrics, downsampleMetrics } from "../src/metrics.mjs";
 
 test("verdichtet Diagrammdaten und bewahrt markante Latenzspitzen", () => {
   const points = Array.from({ length: 300 }, (_, index) => ({ latencyMs: index === 177 ? 9_999 : 10 + index % 25, checkedAt: String(index) }));
@@ -14,4 +14,8 @@ test("verdichtet Diagrammdaten und bewahrt markante Latenzspitzen", () => {
 test("ändert kurze Diagrammreihen nicht", () => {
   const points = [{ latencyMs: 10 }, { latencyMs: 11 }];
   assert.deepEqual(downsampleMetrics(points, 120), points);
+});
+
+test("liefert ein dokumentiertes kompaktes Format für externe Metrikabfragen", () => {
+  assert.deepEqual(compactMetrics([{ checkedAt: "2026-01-01T00:00:00.000Z", latencyMs: 42, players: 3, maxPlayers: 16 }]), [[1767225600000, 42, 3, 16]]);
 });

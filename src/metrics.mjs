@@ -30,3 +30,13 @@ export function downsampleMetrics(points, maximum = 120) {
   if (selected.at(-1) !== source.length - 1) selected.push(source.length - 1);
   return selected.slice(0, limit).map((index) => source[index]);
 }
+
+/** A compact, documented transport shape for external metric consumers. */
+export function compactMetrics(points) {
+  return (Array.isArray(points) ? points : []).map((point) => [
+    Date.parse(point.checkedAt) || 0,
+    point.latencyMs ?? null,
+    point.players ?? null,
+    point.maxPlayers ?? null
+  ]);
+}

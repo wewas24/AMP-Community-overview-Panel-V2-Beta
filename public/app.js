@@ -15,6 +15,8 @@ let metricObserver = null;
 const metricRequests = new Set();
 const pendingMetricIds = new Set();
 let metricBatchTimer = null;
+let searchRenderTimer = null;
+let serverSearchIndex = new Map();
 
 async function api(path, options = {}) {
   const method = String(options.method || "GET").toUpperCase();
@@ -76,7 +78,7 @@ function updateGroups() {
 function visibleServers() {
   const phrase = $("#search").value.trim().toLocaleLowerCase("de"); const category = $("#category-filter").value; const group = $("#group-filter").value; const state = $("#status-filter").value;
   const list = dashboard.servers.filter((server) => {
-    const searchable = `${server.name} ${server.category} ${server.group || ""} ${server.description}`.toLocaleLowerCase("de");
+    const searchable = serverSearchIndex.get(server.id) || "";
     return (!phrase || searchable.includes(phrase)) && (category === "all" || server.category === category) && (group === "all" || server.group === group) && (state === "all" || server.status?.state === state || (state === "OFFLINE" && ["TIMEOUT", "CONNECTION_REFUSED"].includes(server.status?.state)));
   });
   const mode = $("#sort-filter").value;
@@ -143,21 +145,32 @@ function serverCard(server) {
 }
 
 function renderServers() {
-  const grid = $("#server-grid"); const servers = visibleServers(); grid.replaceChildren(); text($("#filter-summary"), `${servers.length} von ${dashboard.servers.length} Servern angezeigt`);
-  if (!servers.length) grid.append(el("p", "empty", dashboard.servers.length ? "Für diesen Filter gibt es keine Server." : "Noch keine öffentlichen Server vorhanden.")); else servers.forEach((server) => grid.append(serverCard(server)));
+  const grid = $("#server-grid"); const servers = visibleServers(); const fragment = document.createDocumentFragment(); text($("#filter-summary"), `${servers.length} von ${dashboard.servers.length} Servern angezeigt`);
+  if (!servers.length) fragment.append(el("p", "empty", dashboard.servers.length ? "Für diesen Filter gibt es keine Server." : "Noch keine öffentlichen Server vorhanden.")); else servers.forEach((server) => fragment.append(serverCard(server)));
+  grid.replaceChildren(fragment);
   observeVisibleCharts();
 }
 
 function needsFullStatusRender() {
   return $("#status-filter").value !== "all" || ["players", "latency", "status"].includes($("#sort-filter").value);
 }
+function replaceServerCards(servers) {
+  const byId = new Map(servers.map((server) => [server.id, server]));
+  let replaced = false;
+  for (const card of $("#server-grid").querySelectorAll(".server-card")) {
+    const server = byId.get(card.dataset.serverId);
+    if (!server) continue;
+    card.replaceWith(serverCard(server)); replaced = true;
+  }
+  if (replaced) observeVisibleCharts();
+}
 function replaceServerCard(server) {
   if (needsFullStatusRender()) return renderServers();
-  const card = [...$("#server-grid").children].find((item) => item.dataset.serverId === server.id);
-  if (card) { card.replaceWith(serverCard(server)); observeVisibleCharts(); }
+  replaceServerCards([server]);
 }
 function applyDashboard(value) {
   dashboard = { ...dashboard, ...value, metrics: dashboard.metrics || {} };
+  serverSearchIndex = new Map(dashboard.servers.map((server) => [server.id, `${server.name} ${server.category} ${server.group || ""} ${server.description}`.toLocaleLowerCase("de")]));
   applyBranding(dashboard.settings); updateStats(dashboard.summary); updateCategories(); updateGroups(); renderServers();
 }
 function applyStatusDelta(value) {
@@ -192,7 +205,7 @@ async function flushMetricRequests() {
     if (!response.ok) return;
     const metrics = (await response.json()).metrics || {};
     dashboard.metrics = { ...dashboard.metrics, ...metrics };
-    if (isAdvanced()) ids.forEach((id) => { const server = dashboard.servers.find((item) => item.id === id); if (server) replaceServerCard(server); });
+    if (isAdvanced()) replaceServerCards(ids.map((id) => dashboard.servers.find((item) => item.id === id)).filter(Boolean));
   } catch {
     // A later visibility event retries the small batch. Rendering must never
     // fail merely because optional chart history is temporarily unavailable.
@@ -495,7 +508,7 @@ async function loadSession() { const response = await api("session"); const valu
 
 function selectFormTab(tab) { $$("[data-form-panel]").forEach((panel) => { panel.hidden = panel.dataset.formPanel !== tab; }); $$("[data-form-tab]").forEach((button) => button.setAttribute("aria-selected", String(button.dataset.formTab === tab))); }
 
-$("#search").addEventListener("input", renderServers); ["#category-filter", "#group-filter", "#status-filter", "#sort-filter"].forEach((id) => $(id).addEventListener("change", renderServers)); $("#refresh-statuses").addEventListener("click", () => loadPublic().catch((error) => { text($("#live-label"), error.message); }));
+$("#search").addEventListener("input", () => { window.clearTimeout(searchRenderTimer); searchRenderTimer = window.setTimeout(renderServers, 90); }); ["#category-filter", "#group-filter", "#status-filter", "#sort-filter"].forEach((id) => $(id).addEventListener("change", renderServers)); $("#refresh-statuses").addEventListener("click", () => loadPublic().catch((error) => { text($("#live-label"), error.message); }));
 function applyTheme(value) { document.documentElement.dataset.theme = value; localStorage.setItem("amp_v2_theme", value); $("#theme-toggle").textContent = value === "light" ? "Dunkel" : "Hell"; }
 function setUiMode(value) {
   advancedMode = Boolean(value); localStorage.setItem("amp_v2_ui_mode", advancedMode ? "advanced" : "simple"); document.body.classList.toggle("advanced-mode", advancedMode); $("#ui-mode-toggle").textContent = advancedMode ? "Einfach" : "Erweitert"; updateCustomPermissionUi(); renderServers();
