@@ -12,6 +12,9 @@ import { sendEmail } from "./src/mail.mjs";
 import { discoverCommunity } from "./src/community-discovery.mjs";
 import { EventHub } from "./src/events.mjs";
 import { sendWebhook } from "./src/webhook.mjs";
+import { sameOriginValues, validMutationRequest } from "./src/request-guards.mjs";
+import { permissionFor, hasPermission } from "./src/permissions.mjs";
+import { isUploadFilename, parseUploadedImage } from "./src/uploads.mjs";
 
 const contentTypes = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".webmanifest": "application/manifest+json; charset=utf-8" };
 const store = await openStore();
@@ -98,10 +101,12 @@ function requestIp(request) {
 function requestProtocol(request) {
   return isTrustedProxy(request) ? String(request.headers["x-forwarded-proto"] || "https").split(",")[0].trim() : (config.cookieSecure ? "https" : "http");
 }
+function requestHost(request) {
+  return String(isTrustedProxy(request) ? request.headers["x-forwarded-host"] || request.headers.host : request.headers.host || "").split(",")[0].trim();
+}
 function sameOrigin(request) {
   const origin = String(request.headers.origin || "");
-  const host = String(isTrustedProxy(request) ? request.headers["x-forwarded-host"] || request.headers.host : request.headers.host || "").split(",")[0].trim();
-  return Boolean(origin && host && secureEqual(origin, `${requestProtocol(request)}://${host}`));
+  return sameOriginValues(origin, requestProtocol(request), requestHost(request));
 }
 
 function sessionFrom(request) {
@@ -117,12 +122,12 @@ function sessionFrom(request) {
 function requireSession(request, response, permission = null) {
   const session = sessionFrom(request);
   if (!session) { error(response, 401, "Bitte zuerst anmelden."); return null; }
-  if (permission && !session.permissions.has(permission)) { error(response, 403, "Deine Rolle hat keine Berechtigung für diese Aktion."); return null; }
+  if (permission && !hasPermission(session, permission)) { error(response, 403, "Deine Rolle hat keine Berechtigung für diese Aktion."); return null; }
   return session;
 }
 
 function requireMutation(request, response, session) {
-  if (!sameOrigin(request) || !secureEqual(request.headers["x-csrf-token"], session.csrfToken)) {
+  if (!validMutationRequest({ origin: String(request.headers.origin || ""), protocol: requestProtocol(request), host: requestHost(request), csrfToken: request.headers["x-csrf-token"], expectedCsrfToken: session.csrfToken })) {
     error(response, 403, "Die Sicherheitsprüfung der Anfrage ist fehlgeschlagen.");
     return false;
   }
@@ -140,7 +145,7 @@ async function body(request, maximum = 128_000) {
 }
 
 function activityText(entries) {
-  const lines = ["AMP Community Dashboard v2.4.2 – Änderungsprotokoll", `Erstellt: ${new Date().toISOString()}`, "Aufbewahrung: sieben Tage", ""];
+  const lines = ["AMP Community Dashboard v2.4.3 – Änderungsprotokoll", `Erstellt: ${new Date().toISOString()}`, "Aufbewahrung: sieben Tage", ""];
   for (const entry of entries) lines.push(`${entry.created_at} · ${entry.username} · ${entry.action}${entry.subject ? ` · ${entry.subject}` : ""}${entry.detail ? ` – ${entry.detail}` : ""}`);
   return `${lines.join("\n")}\n`;
 }
@@ -234,23 +239,6 @@ function dashboardPayload() {
   }), settings: publicSettings(store.getSettings()) };
 }
 
-function permissionFor(remainder, method) {
-  if (remainder === "dashboard") return "dashboard.read";
-  if (remainder === "servers" && method === "GET") return "servers.read";
-  if (remainder === "servers/discover") return "servers.discover";
-  if (/^servers\/[^/]+\/test$/.test(remainder)) return "servers.test";
-  if (remainder.startsWith("servers")) return "servers.write";
-  if (remainder === "settings") return "settings.write";
-  if (remainder === "notifications/test") return "notifications.test";
-  if (remainder === "admins" || remainder.startsWith("admins/")) return "access.write";
-  if (remainder === "activity") return "logs.read";
-  if (remainder === "activity/download") return "logs.export";
-  if (remainder === "backup/export") return "backup.export";
-  if (remainder === "backup/import") return "backup.import";
-  if (remainder === "uploads") return "servers.write";
-  return "dashboard.read";
-}
-
 function sameConnection(left, right) {
   const normalize = (value) => value ? { host: value.host || "", port: Number(value.port || 0), profile: value.profile || "auto", teamSpeakQueryPort: Number(value.teamSpeakQueryPort || 0) } : null;
   return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
@@ -261,20 +249,9 @@ async function validateExternalIcon(server) {
   await resolveSafeTarget(new URL(server.iconUrl).hostname, false);
 }
 
-function uploadedImage(input) {
-  const match = /^data:image\/(png|jpeg|webp);base64,([a-z0-9+/=\s]+)$/i.exec(String(input || ""));
-  if (!match) throw new Error("Bitte eine PNG-, JPEG- oder WebP-Bilddatei wählen.");
-  const content = Buffer.from(match[2].replace(/\s/g, ""), "base64");
-  if (!content.length || content.length > config.maxUploadBytes) throw new Error("Das Bild ist leer oder zu groß.");
-  const type = match[1].toLowerCase();
-  const valid = type === "png" ? content.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) : type === "jpeg" ? content[0] === 0xff && content[1] === 0xd8 && content[2] === 0xff : content.subarray(0, 4).toString() === "RIFF" && content.subarray(8, 12).toString() === "WEBP";
-  if (!valid) throw new Error("Die Bilddatei ist ungültig.");
-  return { content, extension: type === "jpeg" ? "jpg" : type };
-}
-
 async function api(request, response, url) {
   const path = url.pathname;
-  if (request.method === "GET" && path === "/health") return json(response, 200, { ok: true, version: "2.4.2", time: new Date().toISOString() });
+  if (request.method === "GET" && path === "/health") return json(response, 200, { ok: true, version: "2.4.3", time: new Date().toISOString() });
   if (request.method === "GET" && path === "/ready") return json(response, 200, { ready: Boolean(store.db), monitoring: !monitor.stopped });
   if (request.method === "GET" && path === "/api/v1/public/events") { setHeaders(response); events.subscribe(request, response); return; }
   if (request.method === "GET" && ["/api/v1/public/servers", "/api/servers"].includes(path)) return json(response, 200, dashboardPayload());
@@ -368,7 +345,7 @@ async function api(request, response, url) {
   }
   if (request.method === "POST" && remainder === "uploads") {
     const input = await body(request, Math.ceil(config.maxUploadBytes * 1.5) + 16_384);
-    const image = uploadedImage(input?.dataUrl);
+    const image = parseUploadedImage(input?.dataUrl, config.maxUploadBytes);
     await mkdir(config.uploadsDirectory, { recursive: true, mode: 0o700 });
     const name = `${randomUUID()}.${image.extension}`;
     await writeFile(resolve(config.uploadsDirectory, name), image.content, { mode: 0o600 });
@@ -394,7 +371,7 @@ async function api(request, response, url) {
     const saved = store.saveSettings(settings); store.addActivity(session.username, "Seiteneinstellungen geändert"); events.publish("dashboard", dashboardPayload()); return json(response, 200, await adminSettings(saved));
   }
   if (request.method === "POST" && remainder === "notifications/test") {
-    const deliveries = await sendNotifications("Test: AMP Community Dashboard v2.4.2", "Dies ist eine Testbenachrichtigung vom AMP Community Dashboard.");
+    const deliveries = await sendNotifications("Test: AMP Community Dashboard v2.4.3", "Dies ist eine Testbenachrichtigung vom AMP Community Dashboard.");
     if (!deliveries.length) return error(response, 400, "Es ist kein funktionierender SMTP- oder Webhook-Kanal eingerichtet.");
     store.addActivity(session.username, "Benachrichtigungstest gesendet", "", "ok", deliveries.join(", ")); return json(response, 200, { ok: true });
   }
@@ -450,8 +427,8 @@ async function staticFile(request, response, url) {
 }
 
 async function uploadFile(request, response, url) {
-  const name = /^\/media\/([a-z0-9-]+\.(?:png|jpe?g|webp))$/i.exec(url.pathname)?.[1];
-  if (!name) return error(response, 404, "Nicht gefunden.");
+  const name = /^\/media\/([^/]+)$/i.exec(url.pathname)?.[1];
+  if (!isUploadFilename(name)) return error(response, 404, "Nicht gefunden.");
   try {
     const file = resolve(config.uploadsDirectory, name);
     const info = await stat(file); if (!info.isFile()) throw new Error();
@@ -487,7 +464,7 @@ function scheduleMonitoring() {
 }
 void monitor.refresh();
 scheduleMonitoring();
-server.listen(config.port, config.host, () => console.log(`AMP Community Dashboard v2.4.2 läuft auf http://${config.host}:${config.port}`));
+server.listen(config.port, config.host, () => console.log(`AMP Community Dashboard v2.4.3 läuft auf http://${config.host}:${config.port}`));
 
 let shuttingDown = false;
 async function shutdown() {

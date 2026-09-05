@@ -98,7 +98,7 @@ function rejectedTarget(message, code = "PRIVATE_ADDRESS") {
   return error;
 }
 
-export async function resolveSafeTarget(host, allowPrivateNetworks = false) {
+export async function resolveSafeTarget(host, allowPrivateNetworks = false, resolver = lookup) {
   const value = String(host || "").trim().replace(/^\[|\]$/g, "").toLowerCase();
   if (!value) throw rejectedTarget("Der Hostname fehlt.", "DNS_ERROR");
   if (isIP(value)) {
@@ -107,7 +107,7 @@ export async function resolveSafeTarget(host, allowPrivateNetworks = false) {
   }
   let addresses;
   try {
-    addresses = await lookup(value, { all: true, verbatim: true });
+    addresses = await resolver(value, { all: true, verbatim: true });
   } catch {
     throw rejectedTarget("Der Hostname konnte nicht aufgelöst werden.", "DNS_ERROR");
   }

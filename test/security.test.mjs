@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { isPrivateAddress, isTrustedProxyAddress, passwordMatches, passwordRecord, resolveSafeTarget } from "../src/security.mjs";
 import { httpsUrl, normalizeServer } from "../src/validation.mjs";
+import { ensureCommunityPort, validateCommunityResponse } from "../src/community-discovery.mjs";
 
 test("blockiert vollständige private, reservierte und dokumentierte IP-Bereiche", async () => {
   for (const address of ["0.0.0.0", "10.0.0.1", "100.64.0.1", "127.0.0.1", "169.254.0.1", "172.16.0.1", "192.0.2.1", "192.168.1.1", "198.18.0.1", "198.51.100.1", "203.0.113.1", "224.0.0.1", "::", "::1", "fc00::1", "fe80::1", "ff02::1", "2001:db8::1", "::ffff:127.0.0.1"]) assert.equal(isPrivateAddress(address), true, address);
@@ -25,4 +26,21 @@ test("blockiert private Icon- und Community-Adressen sowie versteckt Connect-Dat
   assert.throws(() => httpsUrl("https://127.0.0.1/icon.png", "Icon", false), /öffentliche HTTPS-Adresse/);
   const server = normalizeServer({ name: "Test", communityUrl: "https://amp.beispiel.de/c/test", connectUrl: "steam://connect/8.8.8.8:27015", connection: { host: "8.8.8.8", port: 27015 }, display: { showConnect: false } }, { id: "test" }, 0, false);
   assert.equal(server.display.showConnect, false);
+});
+
+test("blockiert DNS-Rebinding und bindet erlaubte Ziele an eine geprüfte IP", async () => {
+  const rebindingResolver = async () => [{ address: "8.8.8.8", family: 4 }, { address: "127.0.0.1", family: 4 }];
+  await assert.rejects(resolveSafeTarget("rebind.example", false, rebindingResolver), /nicht freigegebene Adresse/);
+  const publicResolver = async () => [{ address: "8.8.8.8", family: 4 }];
+  assert.equal(await resolveSafeTarget("public.example", false, publicResolver), "8.8.8.8");
+});
+
+test("lässt Community-Seiten nur auf freigegebenen HTTPS-Ports und ohne Redirects zu", () => {
+  assert.equal(ensureCommunityPort(443, new Set([443, 8443])), 443);
+  assert.equal(ensureCommunityPort(8443, new Set([443, 8443])), 8443);
+  assert.throws(() => ensureCommunityPort(444, new Set([443, 8443])), /nicht freigegeben/);
+  assert.throws(() => validateCommunityResponse(302, "text/html", 0), /leitet weiter/);
+  assert.throws(() => validateCommunityResponse(200, "application/json", 0), /keine HTML/);
+  assert.throws(() => validateCommunityResponse(200, "text/html", 1_000_001), /zu groß/);
+  assert.doesNotThrow(() => validateCommunityResponse(200, "text/html; charset=utf-8", 42));
 });

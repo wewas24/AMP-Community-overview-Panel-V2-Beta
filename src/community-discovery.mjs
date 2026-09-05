@@ -9,6 +9,20 @@ const maximumCandidates = 12;
 const timeoutMs = 8_000;
 const lastRequests = new Map();
 
+export function ensureCommunityPort(port, allowedPorts = config.communityAllowedPorts) {
+  const numericPort = Number(port);
+  if (!allowedPorts.has(numericPort)) throw new Error("Der HTTPS-Port der Community-Seite ist nicht freigegeben.");
+  return numericPort;
+}
+
+export function validateCommunityResponse(statusCode, contentType = "", contentLength = 0) {
+  if (statusCode && statusCode >= 300 && statusCode < 400) throw new Error("Die Community-Seite leitet weiter. Bitte die endgültige HTTPS-Adresse eintragen.");
+  if (statusCode !== 200) throw new Error(`Die Community-Seite antwortet mit HTTP ${statusCode || "Fehler"}.`);
+  const type = String(contentType || "").toLowerCase();
+  if (type && !type.includes("text/html") && !type.includes("application/xhtml+xml")) throw new Error("Die Adresse liefert keine HTML-Community-Seite.");
+  if (Number(contentLength || 0) > maximumBytes) throw new Error("Die Community-Seite ist für die automatische Prüfung zu groß.");
+}
+
 function decodeHtml(value) {
   return String(value || "")
     .replace(/&(?:amp|#38);/gi, "&")
@@ -294,8 +308,7 @@ function allowedCommunityDomain(communityUrl, trustedDomains = []) {
 async function readPublicPage(rawUrl, allowPrivateNetworks) {
   const communityUrl = httpsUrl(rawUrl, "Die AMP-Community-Adresse", false);
   const url = new URL(communityUrl);
-  const port = Number(url.port || 443);
-  if (!config.communityAllowedPorts.has(port)) throw new Error("Der HTTPS-Port der Community-Seite ist nicht freigegeben.");
+  const port = ensureCommunityPort(url.port || 443);
   const address = await resolveSafeTarget(url.hostname, allowPrivateNetworks);
   const family = isIP(address);
   return new Promise((resolve, reject) => {
@@ -304,7 +317,7 @@ async function readPublicPage(rawUrl, allowPrivateNetworks) {
     const requestOptions = {
       protocol: "https:", hostname: url.hostname, port, path: `${url.pathname}${url.search}`,
       method: "GET", maxHeaderSize: 8_192,
-      headers: { Accept: "text/html,application/xhtml+xml", "Accept-Encoding": "identity", "User-Agent": "AMP-Community-Dashboard/2.4.2" },
+      headers: { Accept: "text/html,application/xhtml+xml", "Accept-Encoding": "identity", "User-Agent": "AMP-Community-Dashboard/2.4.3" },
       servername: isIP(url.hostname) ? undefined : url.hostname,
       // Node requests custom lookups with { all: true }. Returning a pinned
       // literal address in that form prevents a second DNS lookup and closes
@@ -312,12 +325,10 @@ async function readPublicPage(rawUrl, allowPrivateNetworks) {
       lookup: (_hostname, options, callback) => options?.all ? callback(null, [{ address, family }]) : callback(null, address, family)
     };
     const pending = request(requestOptions, (response) => {
-      if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400) { response.resume(); return reject(new Error("Die Community-Seite leitet weiter. Bitte die endgültige HTTPS-Adresse eintragen.")); }
-      if (response.statusCode !== 200) { response.resume(); return reject(new Error(`Die Community-Seite antwortet mit HTTP ${response.statusCode || "Fehler"}.`)); }
       const type = String(response.headers["content-type"] || "").toLowerCase();
-      if (type && !type.includes("text/html") && !type.includes("application/xhtml+xml")) { response.resume(); return reject(new Error("Die Adresse liefert keine HTML-Community-Seite.")); }
       const declaredLength = Number(response.headers["content-length"] || 0);
-      if (declaredLength > maximumBytes) { response.destroy(); return reject(new Error("Die Community-Seite ist für die automatische Prüfung zu groß.")); }
+      try { validateCommunityResponse(response.statusCode, type, declaredLength); }
+      catch (error) { response.resume(); return reject(error); }
       response.on("data", (chunk) => {
         received += chunk.length;
         if (received > maximumBytes) { response.destroy(new Error("Die Community-Seite ist für die automatische Prüfung zu groß.")); return; }
