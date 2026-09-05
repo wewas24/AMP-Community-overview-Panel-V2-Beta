@@ -1,8 +1,8 @@
 {
   "name": "amp-community-dashboard-v2",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "private": true,
-  "description": "AMP Community Dashboard v2.3.0 mit einfacher Oberfläche, Live-Updates und gehärtetem Monitoring.",
+  "description": "AMP Community Dashboard v2.3.1 mit öffentlicher Darstellungsumschaltung, Live-Updates und gehärtetem Monitoring.",
   "type": "module",
   "scripts": {
     "start": "node server.mjs",

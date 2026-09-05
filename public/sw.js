@@ -1,5 +1,5 @@
-const CACHE = "amp-dashboard-v2.3.0";
-const APP_FILES = ["./", "app.css?v=2.3.0", "app.js?v=2.3.0", "manifest.webmanifest", "icon.svg"];
+const CACHE = "amp-dashboard-v2.3.1";
+const APP_FILES = ["./", "app.css?v=2.3.1", "app.js?v=2.3.1", "manifest.webmanifest", "icon.svg"];
 self.addEventListener("install", (event) => event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(APP_FILES)).then(() => self.skipWaiting())));
 self.addEventListener("activate", (event) => event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)))).then(() => self.clients.claim())));
 self.addEventListener("fetch", (event) => {

@@ -1,4 +1,4 @@
-# AMP Community Dashboard v2.3.0
+# AMP Community Dashboard v2.3.1
 
 Eine öffentliche Übersicht für AMP-Community-Seiten. Die AMP-Seite bleibt die vollständige Detailansicht; das Dashboard bündelt Status, Hinweise, Health-Werte und bewusst freigegebene Verbindungslinks.
 
@@ -23,6 +23,7 @@ Eine öffentliche Übersicht für AMP-Community-Seiten. Die AMP-Seite bleibt die
 - Einstellungen bündeln Allgemein, Benutzer, Berechtigungen, Änderungsprotokoll, Sicherungen und Systemstatus. Nicht berechtigte Bereiche werden nicht angezeigt.
 - Rollen heißen Administrator, Moderator, Support, Nur ansehen oder Benutzerdefiniert. Jede Berechtigung wird weiterhin auf dem Server geprüft.
 - Beim ersten leeren Dashboard erscheint ein überspringbarer Schnellstart-Assistent.
+- Die Umschaltung „Einfach“/„Erweitert“ ist in der öffentlichen Kopfzeile und kann von jedem Besucher individuell verwendet werden.
 
 ## Voraussetzungen
 
@@ -48,7 +49,7 @@ Es werden keine zusätzlichen npm-Pakete benötigt.
 
    ```bash
    sudo mkdir -p /opt/amp-community-dashboard
-   sudo unzip /opt/amp-community-dashboard-v2.3.0-simple-ui.zip -d /opt/amp-community-dashboard
+   sudo unzip /opt/amp-community-dashboard-v2.3.1-simple-ui-public-toggle.zip -d /opt/amp-community-dashboard
    sudo useradd --system --home /opt/amp-community-dashboard --shell /usr/sbin/nologin amp 2>/dev/null || true
    sudo chown -R amp:amp /opt/amp-community-dashboard
    ```
@@ -78,20 +79,20 @@ Es werden keine zusätzlichen npm-Pakete benötigt.
 
 Die Übersicht ist dann beispielsweise unter `https://amp.example.com/uebersicht/` verfügbar.
 
-## Update auf v2.3.0
+## Update auf v2.3.1
 
 1. Dienst stoppen und den vollständigen bisherigen Ordner sichern:
 
    ```bash
    sudo systemctl stop amp-community-dashboard
-   sudo cp -a /opt/amp-community-dashboard /opt/amp-community-dashboard-before-v2.3.0
+   sudo cp -a /opt/amp-community-dashboard /opt/amp-community-dashboard-before-v2.3.1
    ```
 
 2. Das Paket in einen temporären Ordner entpacken. Anschließend alle Dateien **außer** `data/` in den bestehenden Projektordner kopieren. `data/` weder löschen noch überschreiben.
 
    ```bash
    sudo mkdir -p /opt/amp-dashboard-update
-   sudo unzip -o /opt/amp-community-dashboard-v2.3.0-simple-ui.zip -d /opt/amp-dashboard-update
+   sudo unzip -o /opt/amp-community-dashboard-v2.3.1-simple-ui-public-toggle.zip -d /opt/amp-dashboard-update
    sudo rsync -a --exclude=data/ /opt/amp-dashboard-update/ /opt/amp-community-dashboard/
    sudo chown -R amp:amp /opt/amp-community-dashboard
    ```

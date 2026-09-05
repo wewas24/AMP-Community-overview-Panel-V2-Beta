@@ -140,7 +140,7 @@ async function body(request, maximum = 128_000) {
 }
 
 function activityText(entries) {
-  const lines = ["AMP Community Dashboard v2.3.0 – Änderungsprotokoll", `Erstellt: ${new Date().toISOString()}`, "Aufbewahrung: sieben Tage", ""];
+  const lines = ["AMP Community Dashboard v2.3.1 – Änderungsprotokoll", `Erstellt: ${new Date().toISOString()}`, "Aufbewahrung: sieben Tage", ""];
   for (const entry of entries) lines.push(`${entry.created_at} · ${entry.username} · ${entry.action}${entry.subject ? ` · ${entry.subject}` : ""}${entry.detail ? ` – ${entry.detail}` : ""}`);
   return `${lines.join("\n")}\n`;
 }
@@ -392,7 +392,7 @@ async function api(request, response, url) {
     const saved = store.saveSettings(settings); store.addActivity(session.username, "Seiteneinstellungen geändert"); events.publish("dashboard", dashboardPayload()); return json(response, 200, await adminSettings(saved));
   }
   if (request.method === "POST" && remainder === "notifications/test") {
-    const deliveries = await sendNotifications("Test: AMP Community Dashboard v2.3.0", "Dies ist eine Testbenachrichtigung vom AMP Community Dashboard.");
+    const deliveries = await sendNotifications("Test: AMP Community Dashboard v2.3.1", "Dies ist eine Testbenachrichtigung vom AMP Community Dashboard.");
     if (!deliveries.length) return error(response, 400, "Es ist kein funktionierender SMTP- oder Webhook-Kanal eingerichtet.");
     store.addActivity(session.username, "Benachrichtigungstest gesendet", "", "ok", deliveries.join(", ")); return json(response, 200, { ok: true });
   }
@@ -485,7 +485,7 @@ function scheduleMonitoring() {
 }
 void monitor.refresh();
 scheduleMonitoring();
-server.listen(config.port, config.host, () => console.log(`AMP Community Dashboard v2.3.0 läuft auf http://${config.host}:${config.port}`));
+server.listen(config.port, config.host, () => console.log(`AMP Community Dashboard v2.3.1 läuft auf http://${config.host}:${config.port}`));
 
 let shuttingDown = false;
 async function shutdown() {

@@ -6,14 +6,14 @@
     <meta name="description" content="Einfache Übersicht und Detailansichten für AMP-Community-Seiten." />
     <meta name="theme-color" content="#0b1220" />
     <title>Meine Gameserver</title>
-    <link rel="stylesheet" href="app.css?v=2.3.0" />
+    <link rel="stylesheet" href="app.css?v=2.3.1" />
     <link rel="manifest" href="manifest.webmanifest" />
   </head>
   <body>
     <main class="shell">
       <header class="topbar">
         <div class="brand"><span class="brand-mark" aria-hidden="true">◈</span><div><h1 id="site-title">Meine Gameserver</h1><p id="site-description">Serverübersicht und AMP-Details</p></div></div>
-        <div class="top-actions"><span class="live" id="live-label">Status wird geladen</span><button class="button secondary" id="admin-button" type="button">Anmelden</button></div>
+        <div class="top-actions"><span class="live" id="live-label">Status wird geladen</span><button class="button secondary" id="ui-mode-toggle" type="button">Erweitert</button><button class="button secondary" id="admin-button" type="button">Anmelden</button></div>
       </header>
 
       <section class="stats" aria-label="Serverstatistiken">
@@ -52,7 +52,7 @@
     </dialog>
 
     <dialog class="dialog admin-dialog" id="admin-dialog" aria-labelledby="admin-title">
-      <header class="dialog-header"><div><p class="eyebrow" id="admin-role">VERWALTUNG</p><h2 id="admin-title">Verwaltung</h2></div><div class="dialog-actions"><button class="button secondary" id="ui-mode-toggle" type="button">Erweitert</button><button class="button secondary" id="logout-button" type="button">Abmelden</button><button class="icon-button" id="close-admin" type="button" aria-label="Verwaltung schließen">×</button></div></header>
+      <header class="dialog-header"><div><p class="eyebrow" id="admin-role">VERWALTUNG</p><h2 id="admin-title">Verwaltung</h2></div><div class="dialog-actions"><button class="button secondary" id="logout-button" type="button">Abmelden</button><button class="icon-button" id="close-admin" type="button" aria-label="Verwaltung schließen">×</button></div></header>
       <p class="message error admin-load-message" id="admin-load-message" role="alert" aria-live="polite"></p>
 
       <nav class="admin-tabs" id="admin-tabs" aria-label="Verwaltungsbereiche"><button data-panel="overview">Dashboard</button><button data-panel="servers">Server</button><button data-panel="monitoring">Benachrichtigungen</button><button data-panel="settings">Einstellungen</button></nav>
@@ -98,6 +98,6 @@
       </section>
     </dialog>
 
-    <script src="app.js?v=2.3.0"></script>
+    <script src="app.js?v=2.3.1"></script>
   </body>
 </html>
