@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS status_current (
   server_id TEXT PRIMARY KEY, state TEXT NOT NULL, detail TEXT NOT NULL,
   latency_ms INTEGER, players INTEGER, max_players INTEGER, version TEXT, map_name TEXT,
   checked_at TEXT NOT NULL, last_success_at TEXT, state_since_at TEXT NOT NULL, failure_count INTEGER NOT NULL DEFAULT 0,
-  last_history_at TEXT, FOREIGN KEY(server_id) REFERENCES servers(id) ON DELETE CASCADE
+  last_history_at TEXT, last_metric_at TEXT, FOREIGN KEY(server_id) REFERENCES servers(id) ON DELETE CASCADE
 );
 CREATE TABLE IF NOT EXISTS status_history (
   id INTEGER PRIMARY KEY AUTOINCREMENT, server_id TEXT NOT NULL, state TEXT NOT NULL,
@@ -38,6 +38,12 @@ CREATE TABLE IF NOT EXISTS status_history (
   FOREIGN KEY(server_id) REFERENCES servers(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS status_history_by_server_time ON status_history(server_id, checked_at);
+CREATE TABLE IF NOT EXISTS metrics_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, server_id TEXT NOT NULL, latency_ms INTEGER,
+  players INTEGER, max_players INTEGER, checked_at TEXT NOT NULL,
+  FOREIGN KEY(server_id) REFERENCES servers(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS metrics_history_by_server_time ON metrics_history(server_id, checked_at);
 CREATE TABLE IF NOT EXISTS activity_log (
   id TEXT PRIMARY KEY, created_at TEXT NOT NULL, username TEXT NOT NULL, action TEXT NOT NULL,
   subject TEXT NOT NULL, result TEXT NOT NULL, detail TEXT NOT NULL
@@ -61,7 +67,8 @@ function defaultSettings() {
     accentColor: "#42e8a5",
     defaultDetailRefreshSeconds: config.defaultRefreshSeconds,
     monitoringIntervalSeconds: config.defaultMonitorSeconds,
-    smtp: { host: "", port: config.defaultSmtpPort, username: "", from: "", to: "" }
+    smtp: { host: "", port: config.defaultSmtpPort, username: "", from: "", to: "" },
+    notifications: { latencyThresholdMs: 0, outageMinutes: 0 }
   };
 }
 
@@ -141,7 +148,7 @@ export class Store {
     const stored = this.db.prepare("SELECT payload FROM settings WHERE id = 1").get();
     const base = defaultSettings();
     const value = stored ? parse(stored.payload, {}) : {};
-    const settings = { ...base, ...value, smtp: { ...base.smtp, ...(value.smtp || {}) } };
+    const settings = { ...base, ...value, smtp: { ...base.smtp, ...(value.smtp || {}) }, notifications: { ...base.notifications, ...(value.notifications || {}) } };
     // Passwords from v2.1 and older are only read here for the one-time
     // migration below. New settings never expose or persist this field.
     return settings;
@@ -172,6 +179,18 @@ export class Store {
   }
 
   async smtpPasswordConfigured() { return Boolean(await this.getSmtpPassword()); }
+
+  async getWebhookUrls() {
+    try { const value = parse(await readFile(config.webhookSecretFile, "utf8"), []); return Array.isArray(value) ? value.filter((item) => typeof item === "string").slice(0, 5) : []; } catch { return []; }
+  }
+
+  async setWebhookUrls(values) {
+    const urls = Array.isArray(values) ? values.filter((item) => typeof item === "string").slice(0, 5) : [];
+    await mkdir(this.secretsDirectory, { recursive: true, mode: 0o700 });
+    const temporary = `${config.webhookSecretFile}.${randomUUID()}.tmp`;
+    await writeFile(temporary, JSON.stringify(urls), { mode: 0o600 }); await chmod(temporary, 0o600);
+    await rename(temporary, config.webhookSecretFile); await chmod(config.webhookSecretFile, 0o600);
+  }
 
   allServers() {
     return this.db.prepare("SELECT * FROM servers ORDER BY sort_order ASC, created_at ASC").all().map((row) => ({ ...parse(row.payload, {}), id: row.id, slug: row.slug, sortOrder: row.sort_order, createdAt: row.created_at, updatedAt: row.updated_at }));
@@ -241,10 +260,11 @@ export class Store {
     const lastSuccess = status.state === "ONLINE" ? timestamp : previous?.last_success_at || null;
     const stateSince = changed ? timestamp : previous?.state_since_at || timestamp;
     const failures = status.state === "ONLINE" ? 0 : (previous?.failure_count || 0) + 1;
-    const addHistory = changed || !previous?.last_history_at || Date.parse(timestamp) - Date.parse(previous.last_history_at) >= 5 * 60_000;
-    this.db.prepare(`INSERT INTO status_current(server_id,state,detail,latency_ms,players,max_players,version,map_name,checked_at,last_success_at,state_since_at,failure_count,last_history_at)
-      VALUES(:serverId,:state,:detail,:latencyMs,:players,:maxPlayers,:version,:map,:checkedAt,:lastSuccessAt,:stateSinceAt,:failureCount,:lastHistoryAt)
-      ON CONFLICT(server_id) DO UPDATE SET state=excluded.state,detail=excluded.detail,latency_ms=excluded.latency_ms,players=excluded.players,max_players=excluded.max_players,version=excluded.version,map_name=excluded.map_name,checked_at=excluded.checked_at,last_success_at=excluded.last_success_at,state_since_at=excluded.state_since_at,failure_count=excluded.failure_count,last_history_at=excluded.last_history_at`).run({
+    const addHistory = changed;
+    const addMetrics = !previous?.last_metric_at || Date.parse(timestamp) - Date.parse(previous.last_metric_at) >= 5 * 60_000;
+    this.db.prepare(`INSERT INTO status_current(server_id,state,detail,latency_ms,players,max_players,version,map_name,checked_at,last_success_at,state_since_at,failure_count,last_history_at,last_metric_at)
+      VALUES(:serverId,:state,:detail,:latencyMs,:players,:maxPlayers,:version,:map,:checkedAt,:lastSuccessAt,:stateSinceAt,:failureCount,:lastHistoryAt,:lastMetricAt)
+      ON CONFLICT(server_id) DO UPDATE SET state=excluded.state,detail=excluded.detail,latency_ms=excluded.latency_ms,players=excluded.players,max_players=excluded.max_players,version=excluded.version,map_name=excluded.map_name,checked_at=excluded.checked_at,last_success_at=excluded.last_success_at,state_since_at=excluded.state_since_at,failure_count=excluded.failure_count,last_history_at=excluded.last_history_at,last_metric_at=excluded.last_metric_at`).run({
       // The status probes may carry internal helper values (for example the raw
       // Steam response). Pass only the values that are actually SQL parameters.
       // Node 22 correctly rejects unknown named parameters here.
@@ -255,7 +275,8 @@ export class Store {
       lastSuccessAt: lastSuccess,
       stateSinceAt: stateSince,
       failureCount: failures,
-      lastHistoryAt: addHistory ? timestamp : previous?.last_history_at || null,
+       lastHistoryAt: addHistory ? timestamp : previous?.last_history_at || null,
+       lastMetricAt: addMetrics ? timestamp : previous?.last_metric_at || null,
       latencyMs: status.latencyMs ?? null,
       players: status.players ?? null,
       maxPlayers: status.maxPlayers ?? null,
@@ -263,6 +284,7 @@ export class Store {
       map: status.map ?? null
     });
     if (addHistory) this.db.prepare("INSERT INTO status_history(server_id,state,latency_ms,players,max_players,checked_at) VALUES(?,?,?,?,?,?)").run(serverId, status.state, status.latencyMs ?? null, status.players ?? null, status.maxPlayers ?? null, timestamp);
+    if (addMetrics) this.db.prepare("INSERT INTO metrics_history(server_id,latency_ms,players,max_players,checked_at) VALUES(?,?,?,?,?)").run(serverId, status.latencyMs ?? null, status.players ?? null, status.maxPlayers ?? null, timestamp);
     return { changed, previous: previous ? this.statusRow(previous) : null, current: this.statusRow(this.getStatus(serverId)) };
   }
 
@@ -285,11 +307,16 @@ export class Store {
     return Math.round((online / (until - from)) * 10_000) / 100;
   }
 
+  metrics(serverId, hours = 24) {
+    return this.db.prepare("SELECT latency_ms AS latencyMs,players,max_players AS maxPlayers,checked_at AS checkedAt FROM metrics_history WHERE server_id = ? AND checked_at >= ? ORDER BY checked_at ASC LIMIT 300").all(serverId, new Date(Date.now() - hours * 60 * 60_000).toISOString());
+  }
+
   cleanup(retention) {
     const activityBefore = new Date(Date.now() - retention.activityMs).toISOString();
     const historyBefore = new Date(Date.now() - retention.historyMs).toISOString();
     this.db.prepare("DELETE FROM activity_log WHERE created_at < ?").run(activityBefore);
     this.db.prepare("DELETE FROM status_history WHERE checked_at < ?").run(historyBefore);
+    this.db.prepare("DELETE FROM metrics_history WHERE checked_at < ?").run(historyBefore);
   }
 
   addActivity(username, action, subject = "", result = "ok", detail = "") {
@@ -409,7 +436,6 @@ export class Store {
     if (oldPassword && !(await this.getSmtpPassword())) await this.setSmtpPassword(oldPassword);
     delete settings.smtp.password;
     this.saveSettings(settings);
-    await redactJsonFile(join(this.dataDirectory, "settings.json"));
     await redactBackupDirectory(this.backupDirectory);
     // Old session rows do not have a CSRF secret. Deliberately invalidate them
     // instead of silently accepting a session without CSRF protection.
@@ -428,6 +454,7 @@ export async function openStore() {
   database.exec(schema);
   // The column is added separately for databases created by v2.0/v2.1.
   try { database.exec("ALTER TABLE sessions ADD COLUMN csrf_token TEXT NOT NULL DEFAULT ''"); } catch { /* already migrated */ }
+  try { database.exec("ALTER TABLE status_current ADD COLUMN last_metric_at TEXT"); } catch { /* already migrated */ }
   const store = new Store(database, config.dataDirectory, config.backupDirectory, config.secretsDirectory);
   await store.migrateLegacy();
   await store.migrateSmtpSecret();

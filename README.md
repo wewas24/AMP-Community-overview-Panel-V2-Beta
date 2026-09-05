@@ -1,97 +1,132 @@
-# AMP Community Dashboard v2.1.1
+# AMP Community Dashboard v2.2.0
 
-Eine öffentliche, schnelle Übersicht für AMP-Community-Seiten. AMP bleibt die vollständige Detailansicht; das Dashboard zeigt Status, Hinweise und bewusst freigegebene Verbindungslinks gesammelt an.
+Eine öffentliche Übersicht für AMP-Community-Seiten. Die AMP-Seite bleibt die vollständige Detailansicht; das Dashboard bündelt Status, Hinweise, Health-Werte und bewusst freigegebene Verbindungslinks.
+
+## Funktionen in v2.2
+
+- Live-Aktualisierung mit Server-Sent Events (SSE), ohne Browser-Polling von Spielservern.
+- Öffentliche versionierte API: `GET /api/v1/public/servers`, `GET /api/v1/public/metrics` und `GET /api/v1/public/events`.
+- Gesundheitswert, Uptime und Latenzdiagramm pro Server. Statuswechsel und Messwerte werden getrennt und platzsparend gespeichert.
+- Eigene Community-URL, Spielserver-Verbindung und optionale Monitoring-Adresse je Server.
+- Adapter für TCP, Steam/Source, Minecraft Java und TeamSpeak; bei `Automatisch` werden passende sichere Abfragen ausprobiert.
+- Detailansicht der AMP-Community-Seite in einem erst nach Klick geladenen Iframe.
+- Servergruppen mit Besucherfilter, Kategorien und Sortierung.
+- Sichere Banner-Uploads (PNG, JPEG, WebP bis 2 MB), helles/dunkles Design und installierbare PWA für Mobilgeräte.
+- SMTP mit STARTTLS, bis zu fünf sichere HTTPS-Webhooks (z. B. Discord), Meldungen bei Statuswechseln, hoher Latenz und längerem Ausfall.
+- Bereits vorhandene Konten, Server und Daten bleiben beim Update erhalten.
 
 ## Voraussetzungen
 
 - Node.js 22 oder neuer
 - Nginx als HTTPS-Reverse-Proxy
-- Öffentliche HTTPS-Adressen für AMP-Community-Seiten
+- öffentliche HTTPS-Adressen für AMP-Community-Seiten
 
 Es werden keine zusätzlichen npm-Pakete benötigt.
 
-## Sicherheitsstand v2.1.1
+## Sicherheitsmodell
 
-- Öffentliche API-Antworten enthalten keine internen Spielserver-Adressen, Ports oder Prüfprofile.
-- Ein Verbindungsbutton ist je Server eine bewusste Freigabe. Ohne diese Option bleibt die Spieladresse privat.
-- Ausgehende Community-, Monitoring- und SMTP-Verbindungen lösen DNS direkt vor der Verbindung auf, prüfen dabei öffentliche IPv4-/IPv6-Netze und verbinden anschließend nur zur geprüften IP-Adresse.
-- Redirects von Community-Seiten sind bei der automatischen Erkennung blockiert. Community- und SMTP-Ports sind auf eine kleine, konfigurierbare Liste begrenzt.
-- SMTP nutzt ausschließlich STARTTLS, prüft Zertifikate und begrenzt Antwort- sowie Nachrichtengrößen.
-- Das SMTP-Passwort liegt nicht mehr in SQLite, Backups oder Exporten, sondern nur in `data/secrets/smtp-password` mit restriktiven Dateirechten.
-- Sitzungen haben zufällige CSRF-Tokens. Jede schreibende Aktion, auch Export und Logout, benötigt denselben Origin und diesen Token.
-- Der Cookie ist unter HTTPS ein `__Host-`-Cookie mit `Secure`, `HttpOnly` und `SameSite=Strict`.
-- Login-Drosselung ist persistent, unabhängig für IP und Benutzername, und das Passwort wird asynchron mit Scrypt geprüft.
-- Audit-Einträge sind nach dem Schreiben unveränderbar, werden nach sieben Tagen bereinigt und enthalten keine Zugangsdaten oder Spielserver-Endpunkte.
+- Öffentliche Antworten enthalten keine Monitoring-Adresse, Spielserver-IP, Ports oder Prüfprofile. Ein Verbindungsbutton wird nur nach bewusster Freigabe je Server angezeigt.
+- Community-, Monitoring-, SMTP- und Webhook-Ziele werden bei jeder Verbindung per DNS aufgelöst, auf öffentliche IPv4-/IPv6-Netze geprüft und anschließend an die geprüfte IP gebunden. Redirects bei der Community-Erkennung sind blockiert.
+- Iframe-, Bild-, Link- und Webhook-Adressen müssen HTTPS ohne Zugangsdaten nutzen. Webhooks sind auf Port 443 begrenzt.
+- Das Monitoring läuft ausschließlich zeitgesteuert im Serverprozess oder nach einem berechtigten manuellen Test. Ein Seitenaufruf startet niemals eine Prüfung.
+- Das SMTP-Passwort und Webhook-Adressen liegen nur in `data/secrets/`, nicht in SQLite, Exporten oder neuen Backups.
+- Sitzungen verwenden CSRF-Tokens, sichere `__Host-`-Cookies unter HTTPS und eine persistente Anmeldedrosselung.
+- Statusdaten werden als „veraltet“ markiert, sobald keine frische Überwachung mehr vorliegt.
 
 ## Neue Installation
 
-1. Ordner nach `/opt/amp-community-dashboard` kopieren und dem Dienstkonto zuordnen.
-2. Das Dienstkonto `amp` anlegen, falls es noch nicht existiert.
-3. Erstes Konto im Projektordner erstellen:
+1. Paket nach `/opt/amp-community-dashboard` entpacken und das Dienstkonto einrichten:
 
    ```bash
+   sudo mkdir -p /opt/amp-community-dashboard
+   sudo unzip /opt/amp-community-dashboard-v2.2.0-live-monitoring.zip -d /opt/amp-community-dashboard
+   sudo useradd --system --home /opt/amp-community-dashboard --shell /usr/sbin/nologin amp 2>/dev/null || true
+   sudo chown -R amp:amp /opt/amp-community-dashboard
+   ```
+
+2. Erstes Konto anlegen:
+
+   ```bash
+   cd /opt/amp-community-dashboard
    sudo -u amp node create-admin.mjs
    ```
 
-4. `amp-community-dashboard.service` nach `/etc/systemd/system/` kopieren, dann aktivieren:
+3. Dienst aktivieren:
 
    ```bash
+   sudo cp amp-community-dashboard.service /etc/systemd/system/
    sudo systemctl daemon-reload
    sudo systemctl enable --now amp-community-dashboard
    ```
 
-5. `nginx-security-http.conf` im `http {}`-Bereich einbinden, zum Beispiel als Datei `/etc/nginx/conf.d/amp-dashboard-security-http.conf`.
-6. Den Inhalt von `nginx-snippet.conf` in den vorhandenen HTTPS-`server {}`-Block der AMP-Domain einfügen. Die AMP-Konfiguration für `/` bleibt unverändert.
-7. Konfiguration prüfen und Nginx neu laden:
+4. `nginx-security-http.conf` im globalen Nginx-`http {}`-Bereich einbinden. Den Inhalt von `nginx-snippet.conf` in den vorhandenen HTTPS-`server {}`-Block der AMP-Domain einfügen. Der vorhandene AMP-Block `location /` bleibt unverändert.
+
+5. Nginx prüfen und neu laden:
 
    ```bash
    sudo nginx -t && sudo systemctl reload nginx
    ```
 
-Die öffentliche Adresse kann beispielsweise so aussehen: `https://amp.example.com/uebersicht/`.
+Die Übersicht ist dann beispielsweise unter `https://amp.example.com/uebersicht/` verfügbar.
 
-## Update auf v2.1.1
+## Update auf v2.2.0
 
-1. Dienst stoppen und eine Sicherung des bisherigen Projektordners erstellen:
+1. Dienst stoppen und den vollständigen bisherigen Ordner sichern:
 
    ```bash
    sudo systemctl stop amp-community-dashboard
-   sudo cp -a /opt/amp-community-dashboard /opt/amp-community-dashboard-before-v2.1.1
+   sudo cp -a /opt/amp-community-dashboard /opt/amp-community-dashboard-before-v2.2.0
    ```
 
-2. Alle Dateien aus dem Update-Paket nach `/opt/amp-community-dashboard` kopieren. Den vorhandenen Ordner `data/` nicht ersetzen oder löschen.
-3. Die neue Dienstdatei und beide Nginx-Dateien gemäß den Schritten 4–7 der Installation übernehmen.
-4. Dateibesitzer setzen und starten:
+2. Das Paket in einen temporären Ordner entpacken. Anschließend alle Dateien **außer** `data/` in den bestehenden Projektordner kopieren. `data/` weder löschen noch überschreiben.
 
    ```bash
+   sudo mkdir -p /opt/amp-dashboard-update
+   sudo unzip -o /opt/amp-community-dashboard-v2.2.0-live-monitoring.zip -d /opt/amp-dashboard-update
+   sudo rsync -a --exclude=data/ /opt/amp-dashboard-update/ /opt/amp-community-dashboard/
    sudo chown -R amp:amp /opt/amp-community-dashboard
+   ```
+
+3. Die neue Dienstdatei übernehmen. Den aktuellen Inhalt von `nginx-snippet.conf` in den bestehenden HTTPS-Serverblock kopieren; die unbuffered Proxy-Einstellungen sind für Live-Updates erforderlich.
+
+4. Starten und prüfen:
+
+   ```bash
    sudo systemctl daemon-reload
    sudo systemctl restart amp-community-dashboard
    sudo systemctl status amp-community-dashboard --no-pager
+   curl -fsS http://127.0.0.1:3100/health
    ```
 
-Beim ersten Start werden alle bisherigen Sitzungen absichtlich abgemeldet. Das bisherige SMTP-Passwort wird aus SQLite in die geschützte Secret-Datei verschoben und aus der Konfiguration entfernt.
+Der erste Start ergänzt die Datenbanktabellen automatisch. Bestehende V2-Daten und die ursprünglichen V1-Dateien bleiben unverändert. Alte Sitzungen können zur Sicherheit abgemeldet werden.
 
-## Betriebshinweise
+## V1-Migration: Backup → Dry Run → Migration → Validierung → Rollback
 
-- Die Anwendung lauscht standardmäßig nur auf `127.0.0.1:3100`. `HOST=0.0.0.0` wird nur mit der ausdrücklichen Variable `ALLOW_PUBLIC_BIND=true` akzeptiert; das ist für den normalen Betrieb nicht vorgesehen.
-- Private Spielserverziele bleiben standardmäßig gesperrt. Für eine bewusst interne Installation kann `Environment=ALLOW_PRIVATE_NETWORKS=true` in der Dienstdatei gesetzt werden. Diese Freigabe nur in vertrauenswürdigen Netzen verwenden.
-- Standardmäßig sind Community-Ports `443,8443` und SMTP-Ports `25,587,2525` erlaubt. Falls nötig, können sie über `COMMUNITY_ALLOWED_PORTS` bzw. `SMTP_ALLOWED_PORTS` im Dienst kontrolliert erweitert werden.
-- Der StartTLS-Test ist absichtlich nur für die erlaubten SMTP-Ports verfügbar; er ist kein allgemeiner Verbindungstest.
-- `data/`, besonders `data/backups/` und `data/secrets/`, muss außerhalb des Webroots bleiben. Die mitgelieferte Anwendung stellt ausschließlich `public/` bereit.
+Für eine reine V1-Installation zuerst im Projektordner prüfen:
 
-## Daten und Backups
+```bash
+sudo -u amp node migrate-v1.mjs
+```
 
-- `data/dashboard-v2.sqlite`: Konfiguration, Konten, Statushistorie und Audit-Protokoll
-- `data/secrets/smtp-password`: SMTP-Geheimnis, nicht in SQLite und nicht in Exporten
-- `data/backups/`: automatische Sicherungen vor Importen
-- Audit-Protokoll: sieben Tage Aufbewahrung
-- Statushistorie: 90 Tage Aufbewahrung
+Erst wenn Anzahl und Fundstellen stimmen, die Migration ausführen:
+
+```bash
+sudo -u amp node migrate-v1.mjs --apply
+```
+
+Das Werkzeug erstellt vorab ein Backup der V1-Dateien, validiert danach die übernommene Serveranzahl und verschiebt eine fehlgeschlagene neue Datenbank in das Backup. Die V1-Originaldateien werden nie verändert.
+
+## Betrieb
+
+- Die Anwendung lauscht standardmäßig nur auf `127.0.0.1:3100`. Öffentlicher Zugriff erfolgt ausschließlich per HTTPS über Nginx.
+- Private Spielserverziele sind standardmäßig blockiert. Für eine bewusst interne Installation kann in der Dienstdatei `Environment=ALLOW_PRIVATE_NETWORKS=true` gesetzt werden. Das nur in einem vertrauenswürdigen Netz verwenden.
+- StartTLS-SMTP-Ports sind standardmäßig `25`, `587` und `2525`; Community-Seiten `443` und `8443`.
+- `GET /health` zeigt den Prozesszustand. `GET /ready` zeigt zusätzlich, ob Datenbank und Monitoring bereit sind.
+- `data/`, insbesondere `data/secrets/`, `data/uploads/` und `data/backups/`, liegt außerhalb des Webroots und darf nie direkt durch Nginx ausgeliefert werden.
+- Die PWA kann über die Browserfunktion „App installieren“ auf Mobilgeräten abgelegt werden. Sie ist eine installierbare Web-App, keine native Store-App.
 
 ## Rechte
 
-- **Vollzugriff**: Einstellungen, Tests, Erkennung, Zugänge, Sicherungen und Protokoll-Export
-- **Serververwaltung**: Server anlegen, bearbeiten, sortieren und löschen; keine Netzwerk-Tests oder automatische Erkennung
-- **Protokoll ansehen**: nur die letzten Audit-Einträge
-
-Die Detailansicht lädt die originale AMP-Community-Seite erst nach einem Klick auf **Details**. Besucher können deren Aktualisierungsintervall individuell einstellen.
+- **Vollzugriff:** Einstellungen, Tests, automatische Erkennung, Zugänge, Sicherungen, Webhooks und Protokollexport.
+- **Serververwaltung:** Server anlegen, bearbeiten, sortieren und löschen; keine Netzwerk-Tests oder Änderungen an Spielserver-Endpunkten.
+- **Protokoll ansehen:** nur die letzten Audit-Einträge.

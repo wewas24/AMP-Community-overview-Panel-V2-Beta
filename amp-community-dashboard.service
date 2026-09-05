@@ -1,5 +1,5 @@
 [Unit]
-Description=AMP Community Dashboard v2.1.1
+Description=AMP Community Dashboard v2.2.0
 After=network-online.target
 Wants=network-online.target
 

@@ -28,6 +28,13 @@ test("speichert Statusdaten ohne interne Probe-Antwort", async () => {
     const status = store.statusRow(store.getStatus("server-1"));
     assert.equal(status.state, "ONLINE");
     assert.equal(status.latencyMs, 12);
+    const repeated = store.saveStatus("server-1", {
+      state: "ONLINE", detail: "Weiterhin erreichbar.",
+      checkedAt: new Date(Date.parse(timestamp) + 30_000).toISOString(), latencyMs: 15
+    });
+    assert.equal(repeated.changed, false);
+    assert.equal(store.db.prepare("SELECT count(*) AS count FROM status_history WHERE server_id = ?").get("server-1").count, 1);
+    assert.equal(store.metrics("server-1", 24).length, 1);
     await store.setSmtpPassword("nur-in-der-secret-datei");
     const exported = store.exportData();
     assert.equal(JSON.stringify(exported).includes("nur-in-der-secret-datei"), false);

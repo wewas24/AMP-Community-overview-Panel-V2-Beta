@@ -85,14 +85,17 @@ export function normalizeServer(input, existing = {}, sortOrder = 0, allowPrivat
     name,
     slug: slugify(slugInput || name),
     category: cleanText(input?.category, "Allgemein", 40),
+    group: cleanText(input?.group, "", 40),
     description: cleanText(input?.description, "", 300),
     notice: cleanText(input?.notice, "", 240),
     visibility: visibilityValues.has(input?.visibility) ? input.visibility : "public",
     communityUrl: httpsUrl(input?.communityUrl || input?.url, "Die AMP-Community-Adresse", false),
     connectUrl: connectionLink(input?.connectUrl, true),
     iconUrl,
+    bannerUrl: typeof input?.bannerUrl === "string" ? (/^\/media\/[a-z0-9-]+\.(?:png|jpe?g|webp)$/i.test(input.bannerUrl) ? input.bannerUrl : "") : existing.bannerUrl || "",
     accentColor: /^#[0-9a-f]{6}$/i.test(input?.accentColor || "") ? input.accentColor : "",
     connection: connectionFromInput(input?.connection || { host: input?.connectionHost, port: input?.connectionPort, profile: input?.profile, teamSpeakQueryPort: input?.teamSpeakQueryPort }, allowPrivateNetworks),
+    monitoringTarget: connectionFromInput(input?.monitoringTarget || { host: input?.monitoringHost, port: input?.monitoringPort, profile: input?.monitoringProfile, teamSpeakQueryPort: input?.monitoringTeamSpeakQueryPort }, allowPrivateNetworks) || existing.monitoringTarget || null,
     links: {
       website: httpsUrl(linksInput.website, "Die Webseite", true),
       discord: httpsUrl(linksInput.discord, "Der Discord-Link", true),
@@ -138,5 +141,11 @@ export function normalizeSettings(input, previous, defaultSmtpPort) {
     if (next.smtp.host && !validHost(next.smtp.host)) throw new Error("Der SMTP-Server ist ungültig.");
     if (!Number.isInteger(next.smtp.port) || next.smtp.port < 1 || next.smtp.port > 65535) next.smtp.port = defaultSmtpPort;
   }
+  const notifications = input?.notifications && typeof input.notifications === "object" ? input.notifications : {};
+  next.notifications = {
+    ...previous.notifications,
+    latencyThresholdMs: notifications.latencyThresholdMs === undefined ? previous.notifications?.latencyThresholdMs || 0 : Math.max(0, Math.min(60_000, Number(notifications.latencyThresholdMs) || 0)),
+    outageMinutes: notifications.outageMinutes === undefined ? previous.notifications?.outageMinutes || 0 : Math.max(0, Math.min(24 * 60, Number(notifications.outageMinutes) || 0))
+  };
   return next;
 }

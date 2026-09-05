@@ -1,0 +1,11 @@
+{
+  "name": "AMP Community Dashboard",
+  "short_name": "AMP Dashboard",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#07111f",
+  "theme_color": "#0b1220",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

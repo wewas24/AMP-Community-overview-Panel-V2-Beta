@@ -1,40 +1,56 @@
-AMP Community Dashboard v2.1.1 – Sicherheitsupdate
+AMP Community Dashboard v2.2.0 – Update-Anleitung
 
-Diese Anleitung verwendet ausschließlich Beispielwerte.
+Diese Anleitung verwendet ausschließlich Beispielwerte und bewahrt alle vorhandenen Daten.
 
-1. Daten und bisherigen Projektordner sichern:
+1. Dienst stoppen und Sicherung erstellen
 
-   systemctl stop amp-community-dashboard
-   cp -a /opt/amp-community-dashboard /opt/amp-community-dashboard-before-v2.1.1
+   sudo systemctl stop amp-community-dashboard
+   sudo cp -a /opt/amp-community-dashboard /opt/amp-community-dashboard-before-v2.2.0
 
-2. Das Update-Paket entpacken und alle Dateien in den bestehenden Projektordner kopieren. Den Ordner `data` nicht löschen oder aus einem Paket überschreiben:
+2. Update sicher einspielen
 
-   unzip -o /opt/amp-community-dashboard-v2.1.1-security.zip -d /opt/amp-community-dashboard
-   chown -R amp:amp /opt/amp-community-dashboard
+Das Paket nicht direkt über den Projektordner entpacken. In einen temporären Ordner entpacken und danach alle Dateien außer data/ übernehmen:
 
-3. Die mitgelieferte Dienstdatei nach `/etc/systemd/system/amp-community-dashboard.service` kopieren. Eigene Einstellungen, etwa `ALLOW_PRIVATE_NETWORKS=true`, bei Bedarf wieder bewusst ergänzen.
+   sudo mkdir -p /opt/amp-dashboard-update
+   sudo unzip -o /opt/amp-community-dashboard-v2.2.0-live-monitoring.zip -d /opt/amp-dashboard-update
+   sudo rsync -a --exclude=data/ /opt/amp-dashboard-update/ /opt/amp-community-dashboard/
+   sudo chown -R amp:amp /opt/amp-community-dashboard
 
-4. Nginx härten:
+Der Ordner data/ bleibt vollständig erhalten: Datenbank, Administratorkonten, Einstellungen, Sicherungen, Uploads und Geheimnisse werden nicht überschrieben.
 
-   - `nginx-security-http.conf` im `http {}`-Bereich von Nginx einbinden.
-   - Den neuen Inhalt von `nginx-snippet.conf` in den vorhandenen HTTPS-Serverblock kopieren.
-   - Eine alte Zeile `proxy_cookie_path / /uebersicht/;` entfernen. Sie verhindert den sicheren `__Host-`-Cookie.
+3. Dienst und Nginx übernehmen
 
-   Danach prüfen:
+   sudo cp /opt/amp-community-dashboard/amp-community-dashboard.service /etc/systemd/system/amp-community-dashboard.service
 
-   nginx -t && systemctl reload nginx
+- nginx-security-http.conf weiterhin im globalen Nginx-http{}-Bereich einbinden.
+- Den aktuellen nginx-snippet.conf-Inhalt in den HTTPS-Serverblock kopieren.
+- Die Zeilen proxy_buffering off; und proxy_cache off; sind für Live-Updates erforderlich.
+- Eine alte Zeile proxy_cookie_path / /uebersicht/; entfernen, falls vorhanden.
 
-5. Dienst laden und starten:
+Danach:
 
-   systemctl daemon-reload
-   systemctl restart amp-community-dashboard
-   systemctl status amp-community-dashboard --no-pager
+   sudo nginx -t && sudo systemctl reload nginx
+   sudo systemctl daemon-reload
+   sudo systemctl restart amp-community-dashboard
+   sudo systemctl status amp-community-dashboard --no-pager
+   curl -fsS http://127.0.0.1:3100/health
 
-Beim ersten Start werden vorhandene Sitzungen absichtlich beendet. Das SMTP-Passwort wird aus der Datenbank in `data/secrets/smtp-password` verschoben und erscheint nicht in Exporten oder neuen Sicherungen.
+4. Nach dem Update prüfen
 
-Wichtige Änderungen
+- Dashboard im Browser mit Strg+F5 neu laden.
+- Anmelden und prüfen, ob Gruppen, Connect-Buttons und Banner korrekt dargestellt werden.
+- Unter Überwachung eine Testbenachrichtigung senden.
+- Prüfen, dass oben die Live-Verbindung keinen Wiederherstellungshinweis zeigt.
 
-- Spielserver-Adressen bleiben in der öffentlichen API verborgen. Für den Verbindungsbutton muss bei jedem Server „Verbindungsbutton öffentlich anzeigen“ aktiv gewählt werden.
-- Nur Vollzugriff kann automatische Erkennung, Spielserver-Tests sowie eine neue oder geänderte Spielserver-Adresse auslösen.
-- SMTP mit STARTTLS ist auf die erlaubten SMTP-Ports begrenzt. Standard sind 25, 587 und 2525.
-- Der Node-Dienst bleibt ausschließlich auf `127.0.0.1:3100`; der öffentliche Zugriff erfolgt nur über Nginx und HTTPS.
+V1-Migration
+
+Bei einer reinen V1-Installation vor dem ersten Start erst ausführen:
+
+   cd /opt/amp-community-dashboard
+   sudo -u amp node migrate-v1.mjs
+
+Nur wenn die Ausgabe korrekt ist:
+
+   sudo -u amp node migrate-v1.mjs --apply
+
+Das Werkzeug sichert zuerst, prüft ohne Änderungen, migriert, validiert die Anzahl der Server und behält die V1-Originaldateien unverändert.

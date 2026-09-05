@@ -2,13 +2,14 @@ const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const roleLabels = { owner: "Vollzugriff", editor: "Serververwaltung", auditor: "Protokoll ansehen" };
 const rolePanels = { owner: ["overview", "servers", "settings", "monitoring", "access", "logs"], editor: ["servers"], auditor: ["logs"] };
-let dashboard = { servers: [], settings: {}, summary: {} };
+let dashboard = { servers: [], settings: {}, summary: {}, metrics: {} };
 let admin = null;
 let csrfToken = null;
 let managedServers = [];
 let activeDetails = null;
 let detailTimer = null;
 let draggedId = null;
+let liveEvents = null;
 
 async function api(path, options = {}) {
   const method = String(options.method || "GET").toUpperCase();
@@ -24,6 +25,7 @@ async function message(response) {
 function text(node, value) { node.textContent = value ?? ""; return node; }
 function el(tag, className, value) { const node = document.createElement(tag); if (className) node.className = className; if (value !== undefined) node.textContent = value; return node; }
 function stateInfo(status = {}) {
+  if (status.stale) return { label: "Veraltet", className: "unknown" };
   const raw = status.state || "UNKNOWN";
   if (raw === "ONLINE") return { label: "Online", className: "online" };
   if (raw === "MAINTENANCE") return { label: "Wartung", className: "maintenance" };
@@ -56,11 +58,17 @@ function updateCategories() {
   select.replaceChildren(new Option("Alle Kategorien", "all")); categories.forEach((category) => select.add(new Option(category, category))); select.value = categories.includes(previous) ? previous : "all";
 }
 
+function updateGroups() {
+  const select = $("#group-filter"); const previous = select.value;
+  const groups = [...new Set(dashboard.servers.map((server) => server.group).filter(Boolean))].sort((a, b) => a.localeCompare(b, "de"));
+  select.replaceChildren(new Option("Alle Gruppen", "all")); groups.forEach((group) => select.add(new Option(group, group))); select.value = groups.includes(previous) ? previous : "all";
+}
+
 function visibleServers() {
-  const phrase = $("#search").value.trim().toLocaleLowerCase("de"); const category = $("#category-filter").value; const state = $("#status-filter").value;
+  const phrase = $("#search").value.trim().toLocaleLowerCase("de"); const category = $("#category-filter").value; const group = $("#group-filter").value; const state = $("#status-filter").value;
   const list = dashboard.servers.filter((server) => {
-    const searchable = `${server.name} ${server.category} ${server.description}`.toLocaleLowerCase("de");
-    return (!phrase || searchable.includes(phrase)) && (category === "all" || server.category === category) && (state === "all" || server.status?.state === state || (state === "OFFLINE" && ["TIMEOUT", "CONNECTION_REFUSED"].includes(server.status?.state)));
+    const searchable = `${server.name} ${server.category} ${server.group || ""} ${server.description}`.toLocaleLowerCase("de");
+    return (!phrase || searchable.includes(phrase)) && (category === "all" || server.category === category) && (group === "all" || server.group === group) && (state === "all" || server.status?.state === state || (state === "OFFLINE" && ["TIMEOUT", "CONNECTION_REFUSED"].includes(server.status?.state)));
   });
   const mode = $("#sort-filter").value;
   return list.sort((a, b) => mode === "name" ? a.name.localeCompare(b.name, "de") : mode === "players" ? Number(b.status?.players || -1) - Number(a.status?.players || -1) : mode === "latency" ? Number(a.status?.latencyMs || 9e9) - Number(b.status?.latencyMs || 9e9) : mode === "status" ? stateInfo(a.status).label.localeCompare(stateInfo(b.status).label, "de") : 0);
@@ -102,6 +110,7 @@ function copyAddressButton(server) {
 
 function serverCard(server) {
   const card = el("article", "server-card"); card.style.setProperty("--card-accent", server.accentColor || "var(--accent)");
+  if (server.bannerUrl) { const banner = document.createElement("img"); banner.className = "server-banner"; banner.src = server.bannerUrl; banner.alt = ""; card.append(banner); }
   const header = el("header", "card-header"); const ident = el("div", "server-ident");
   const icon = server.iconUrl ? document.createElement("img") : el("span", "server-icon", "◆"); icon.className = "server-icon"; if (server.iconUrl) { icon.src = server.iconUrl; icon.alt = ""; }
   const title = el("div"); title.append(el("h2", "server-name", server.name), el("div", "category", server.category || "Allgemein")); ident.append(icon, title);
@@ -114,8 +123,10 @@ function serverCard(server) {
   if (server.display?.showVersion && server.status?.map) metrics.append(metric("Map", server.status.map));
   if (server.display?.showVersion && server.status?.version) metrics.append(metric("Version", server.status.version));
   if (server.uptime?.day !== null && server.uptime?.day !== undefined) metrics.append(metric("Uptime 24 h", `${server.uptime.day} %`));
+  metrics.append(metric("Health", `${server.healthScore ?? 0} / 100`));
   if (metrics.children.length) card.append(metrics);
-  const meta = el("p", "card-meta", `${relativeTime(server.status?.checkedAt)} geprüft${endpoint(server) ? ` · ${endpoint(server)}` : ""}`); meta.title = server.status?.detail || ""; card.append(meta);
+  const meta = el("p", "card-meta", `${relativeTime(server.status?.checkedAt)} geprüft${server.group ? ` · ${server.group}` : ""}`); meta.title = server.status?.detail || ""; card.append(meta);
+  const chart = metricChart(dashboard.metrics?.[server.id] || []); if (chart) card.append(chart);
   const actions = el("div", "card-actions"); const connect = connectButton(server); const copyAddress = copyAddressButton(server); if (connect) actions.append(connect); else if (copyAddress) actions.append(copyAddress); const details = el("button", "button secondary", "Details"); details.type = "button"; details.addEventListener("click", () => openDetails(server)); actions.append(details);
   if (server.links?.discord) actions.append(linkButton("Discord", server.links.discord)); if (server.links?.website) actions.append(linkButton("Webseite", server.links.website)); card.append(actions);
   return card;
@@ -126,8 +137,17 @@ function renderServers() {
   if (!servers.length) grid.append(el("p", "empty", dashboard.servers.length ? "Für diesen Filter gibt es keine Server." : "Noch keine öffentlichen Server vorhanden.")); else servers.forEach((server) => grid.append(serverCard(server)));
 }
 
+function applyDashboard(value) { dashboard = { ...dashboard, ...value }; applyBranding(dashboard.settings); updateStats(dashboard.summary); updateCategories(); updateGroups(); renderServers(); }
+function metricChart(points) {
+  const values = points.map((point) => Number(point.latencyMs)).filter((value) => Number.isFinite(value) && value >= 0);
+  if (values.length < 2) return null;
+  const maximum = Math.max(...values, 1); const width = 160; const height = 34;
+  const path = values.map((value, index) => `${index ? "L" : "M"}${Math.round(index / (values.length - 1) * width)} ${Math.round(height - value / maximum * (height - 4))}`).join(" ");
+  const wrap = el("div", "metric-chart"); wrap.append(el("span", "", "Latenzverlauf (24 h)")); const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); svg.setAttribute("viewBox", `0 0 ${width} ${height}`); svg.setAttribute("role", "img"); svg.setAttribute("aria-label", "Latenzverlauf der letzten 24 Stunden"); const line = document.createElementNS("http://www.w3.org/2000/svg", "path"); line.setAttribute("d", path); svg.append(line); wrap.append(svg); return wrap;
+}
+async function loadMetrics() { const response = await api("public/metrics"); if (response.ok) { dashboard.metrics = (await response.json()).metrics || {}; renderServers(); } }
 async function loadPublic() {
-  const response = await api("public/servers"); if (!response.ok) throw new Error(await message(response)); dashboard = await response.json(); applyBranding(dashboard.settings); updateStats(dashboard.summary); updateCategories(); renderServers();
+  const response = await api("public/servers"); if (!response.ok) throw new Error(await message(response)); applyDashboard(await response.json()); await loadMetrics();
 }
 
 function clearDetailTimer() { if (detailTimer) window.clearInterval(detailTimer); detailTimer = null; }
@@ -267,11 +287,20 @@ function resetServerForm() {
 }
 function field(id, value) { $(id).value = value ?? ""; }
 function editServer(server) {
-  field("#server-id", server.id); field("#server-name", server.name); field("#server-slug", server.slug); field("#server-category", server.category); field("#server-visibility", server.visibility); field("#server-description", server.description); field("#server-notice", server.notice); field("#server-community-url", server.communityUrl); field("#server-connect-url", server.connectUrl); field("#server-host", server.connection?.host); field("#server-port", server.connection?.port); field("#server-profile", server.connection?.profile || "auto"); field("#server-ts-query", server.connection?.teamSpeakQueryPort); $("#server-monitoring").checked = server.monitoring?.enabled !== false; field("#server-icon", server.iconUrl); field("#server-accent", server.accentColor || "#42e8a5"); $("#server-options").open = true;
+  field("#server-id", server.id); field("#server-name", server.name); field("#server-slug", server.slug); field("#server-category", server.category); field("#server-group", server.group); field("#server-visibility", server.visibility); field("#server-description", server.description); field("#server-notice", server.notice); field("#server-community-url", server.communityUrl); field("#server-connect-url", server.connectUrl); field("#server-host", server.connection?.host); field("#server-port", server.connection?.port); field("#server-profile", server.connection?.profile || "auto"); field("#server-ts-query", server.connection?.teamSpeakQueryPort); field("#monitor-host", server.monitoringTarget?.host); field("#monitor-port", server.monitoringTarget?.port); field("#monitor-profile", server.monitoringTarget?.profile || "auto"); field("#monitor-ts-query", server.monitoringTarget?.teamSpeakQueryPort); $("#server-monitoring").checked = server.monitoring?.enabled !== false; field("#server-icon", server.iconUrl); $("#server-banner").value = ""; field("#server-accent", server.accentColor || "#42e8a5"); $("#server-options").open = true;
   ["website", "discord", "wiki", "map", "modpack"].forEach((key) => field(`#link-${key}`, server.links?.[key])); $("#display-players").checked = server.display?.showPlayers !== false; $("#display-ping").checked = server.display?.showPing !== false; $("#display-version").checked = server.display?.showVersion !== false; $("#display-connect").checked = server.display?.showConnect === true; text($("#server-form-title"), `„${server.name}“ bearbeiten`); $("#cancel-edit").hidden = false; switchPanel("servers"); window.setTimeout(() => $("#server-name").focus(), 0);
 }
 function serverPayload() {
-  return { name: $("#server-name").value, slug: $("#server-slug").value, category: $("#server-category").value, visibility: $("#server-visibility").value, description: $("#server-description").value, notice: $("#server-notice").value, communityUrl: $("#server-community-url").value, connectUrl: $("#server-connect-url").value, iconUrl: $("#server-icon").value, accentColor: $("#server-accent").value, connection: { host: $("#server-host").value, port: $("#server-port").value, profile: $("#server-profile").value, teamSpeakQueryPort: $("#server-ts-query").value }, monitoring: { enabled: $("#server-monitoring").checked }, links: Object.fromEntries(["website", "discord", "wiki", "map", "modpack"].map((key) => [key, $(`#link-${key}`).value])), display: { showPlayers: $("#display-players").checked, showPing: $("#display-ping").checked, showVersion: $("#display-version").checked, showConnect: $("#display-connect").checked } };
+  return { name: $("#server-name").value, slug: $("#server-slug").value, category: $("#server-category").value, group: $("#server-group").value, visibility: $("#server-visibility").value, description: $("#server-description").value, notice: $("#server-notice").value, communityUrl: $("#server-community-url").value, connectUrl: $("#server-connect-url").value, iconUrl: $("#server-icon").value, accentColor: $("#server-accent").value, connection: { host: $("#server-host").value, port: $("#server-port").value, profile: $("#server-profile").value, teamSpeakQueryPort: $("#server-ts-query").value }, monitoringTarget: { host: $("#monitor-host").value, port: $("#monitor-port").value, profile: $("#monitor-profile").value, teamSpeakQueryPort: $("#monitor-ts-query").value }, monitoring: { enabled: $("#server-monitoring").checked }, links: Object.fromEntries(["website", "discord", "wiki", "map", "modpack"].map((key) => [key, $(`#link-${key}`).value])), display: { showPlayers: $("#display-players").checked, showPing: $("#display-ping").checked, showVersion: $("#display-version").checked, showConnect: $("#display-connect").checked } };
+}
+async function uploadSelectedBanner(payload) {
+  const file = $("#server-banner").files?.[0];
+  if (!file) return payload;
+  if (file.size > 2 * 1024 * 1024) throw new Error("Das Banner darf höchstens 2 MB groß sein.");
+  const dataUrl = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onerror = () => reject(new Error("Das Bild konnte nicht gelesen werden.")); reader.onload = () => resolve(reader.result); reader.readAsDataURL(file); });
+  const response = await api("admin/uploads", { method: "POST", body: JSON.stringify({ dataUrl }) });
+  if (!response.ok) throw new Error(await message(response));
+  return { ...payload, bannerUrl: (await response.json()).url };
 }
 function renderManagedServers() {
   const list = $("#server-list"); list.replaceChildren();
@@ -286,7 +315,7 @@ async function duplicate(server) { const response = await api(`admin/servers/${s
 async function removeServer(server) { if (!confirm(`„${server.name}“ wirklich löschen?`)) return; const response = await api(`admin/servers/${server.id}`, { method: "DELETE" }); if (!response.ok) return setServerMessage(await message(response), true); resetServerForm(); await loadAdmin(); await loadPublic(); }
 
 function fillSettings(settings) {
-  field("#setting-title", settings.siteTitle); field("#setting-description", settings.siteDescription); field("#setting-accent", settings.accentColor || "#42e8a5"); field("#setting-detail-refresh", settings.defaultDetailRefreshSeconds); field("#setting-monitor-interval", settings.monitoringIntervalSeconds); field("#smtp-host", settings.smtp?.host); field("#smtp-port", settings.smtp?.port || 587); field("#smtp-user", settings.smtp?.username); field("#smtp-from", settings.smtp?.from); field("#smtp-to", settings.smtp?.to); $("#smtp-password").value = ""; $("#smtp-password").placeholder = settings.smtp?.passwordConfigured ? "Passwort ist gespeichert – nur zum Ändern eingeben" : "Passwort eingeben";
+  field("#setting-title", settings.siteTitle); field("#setting-description", settings.siteDescription); field("#setting-accent", settings.accentColor || "#42e8a5"); field("#setting-detail-refresh", settings.defaultDetailRefreshSeconds); field("#setting-monitor-interval", settings.monitoringIntervalSeconds); field("#smtp-host", settings.smtp?.host); field("#smtp-port", settings.smtp?.port || 587); field("#smtp-user", settings.smtp?.username); field("#smtp-from", settings.smtp?.from); field("#smtp-to", settings.smtp?.to); field("#alert-latency", settings.notifications?.latencyThresholdMs || 0); field("#alert-outage", settings.notifications?.outageMinutes || 0); $("#smtp-password").value = ""; $("#webhook-urls").value = ""; $("#clear-webhooks").checked = false; $("#smtp-password").placeholder = settings.smtp?.passwordConfigured ? "Passwort ist gespeichert – nur zum Ändern eingeben" : "Passwort eingeben"; $("#webhook-urls").placeholder = settings.webhookCount ? `${settings.webhookCount} Webhook(s) gespeichert – nur zum Ersetzen hier eintragen` : "optional: Discord- oder Webhook-Adresse";
 }
 function renderAdmins(admins) { const list = $("#admin-list"); list.replaceChildren(); admins.forEach((account) => { const row = el("div", "manage-row"); const info = el("div"); info.append(el("p", "manage-title", account.username), el("p", "manage-meta", roleLabels[account.role] || account.role)); const actions = el("div", "row-actions"); if (account.username !== admin.username) { const role = document.createElement("select"); ["owner", "editor", "auditor"].forEach((value) => role.add(new Option(roleLabels[value], value, false, value === account.role))); role.addEventListener("change", async () => { const response = await api(`admin/admins/${encodeURIComponent(account.username)}`, { method: "PATCH", body: JSON.stringify({ role: role.value }) }); if (!response.ok) $("#admin-message").textContent = await message(response); else await loadAdmin(); }); actions.append(role); const remove = el("button", "small-button", "Löschen"); remove.type = "button"; remove.addEventListener("click", async () => { if (!confirm(`Konto „${account.username}“ löschen?`)) return; const response = await api(`admin/admins/${encodeURIComponent(account.username)}`, { method: "DELETE" }); if (!response.ok) $("#admin-message").textContent = await message(response); else await loadAdmin(); }); actions.append(remove); } row.append(info, actions); list.append(row); }); }
 
@@ -294,7 +323,9 @@ async function loadSession() { const response = await api("session"); const valu
 
 function selectFormTab(tab) { $$("[data-form-panel]").forEach((panel) => { panel.hidden = panel.dataset.formPanel !== tab; }); $$("[data-form-tab]").forEach((button) => button.setAttribute("aria-selected", String(button.dataset.formTab === tab))); }
 
-$("#search").addEventListener("input", renderServers); ["#category-filter", "#status-filter", "#sort-filter"].forEach((id) => $(id).addEventListener("change", renderServers)); $("#refresh-statuses").addEventListener("click", () => loadPublic().catch((error) => { text($("#live-label"), error.message); }));
+$("#search").addEventListener("input", renderServers); ["#category-filter", "#group-filter", "#status-filter", "#sort-filter"].forEach((id) => $(id).addEventListener("change", renderServers)); $("#refresh-statuses").addEventListener("click", () => loadPublic().catch((error) => { text($("#live-label"), error.message); }));
+function applyTheme(value) { document.documentElement.dataset.theme = value; localStorage.setItem("amp_v2_theme", value); $("#theme-toggle").textContent = value === "light" ? "Dunkel" : "Hell"; }
+$("#theme-toggle").addEventListener("click", () => applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light"));
 $("#close-details").addEventListener("click", closeDetails); $("#details-dialog").addEventListener("close", () => { if (activeDetails) closeDetails(); }); $("#detail-refresh").addEventListener("change", (event) => setDetailRefresh(event.target.value)); $("#refresh-detail").addEventListener("click", reloadDetail);
 $("#admin-button").addEventListener("click", openAdmin); $("#close-login").addEventListener("click", () => $("#login-dialog").close()); $("#close-admin").addEventListener("click", () => $("#admin-dialog").close());
 $("#login-form").addEventListener("submit", async (event) => {
@@ -317,12 +348,12 @@ $("#login-form").addEventListener("submit", async (event) => {
   }
 });
 $("#logout-button").addEventListener("click", async () => { await api("logout", { method: "POST", body: "{}" }); admin = null; csrfToken = null; updateAdminUi(); $("#admin-dialog").close(); }); $$("#admin-tabs button").forEach((button) => button.addEventListener("click", () => switchPanel(button.dataset.panel))); $$("[data-form-tab]").forEach((button) => button.addEventListener("click", () => selectFormTab(button.dataset.formTab)));
-$("#cancel-edit").addEventListener("click", resetServerForm); $("#server-form").addEventListener("submit", async (event) => { event.preventDefault(); const id = $("#server-id").value; const response = await api(id ? `admin/servers/${id}` : "admin/servers", { method: id ? "PATCH" : "POST", body: JSON.stringify(serverPayload()) }); if (!response.ok) return setServerMessage(await message(response), true); setServerMessage("Server gespeichert."); resetServerForm(); await loadAdmin(); await loadPublic(); });
+$("#cancel-edit").addEventListener("click", resetServerForm); $("#server-form").addEventListener("submit", async (event) => { event.preventDefault(); const id = $("#server-id").value; try { const response = await api(id ? `admin/servers/${id}` : "admin/servers", { method: id ? "PATCH" : "POST", body: JSON.stringify(await uploadSelectedBanner(serverPayload())) }); if (!response.ok) return setServerMessage(await message(response), true); setServerMessage("Server gespeichert."); resetServerForm(); await loadAdmin(); await loadPublic(); } catch (error) { setServerMessage(error.message || "Der Server konnte nicht gespeichert werden.", true); } });
 $("#discover-server").addEventListener("click", discoverServerAddress);
 $("#test-server").addEventListener("click", async () => { const id = $("#server-id").value; if (!id) return setServerMessage("Bitte den Server zuerst speichern.", true); const response = await api(`admin/servers/${id}/test`, { method: "POST", body: "{}" }); if (!response.ok) return setServerMessage(await message(response), true); const result = await response.json(); setServerMessage(`${stateInfo(result.status).label}: ${result.status.detail}`); await loadAdmin(); await loadPublic(); });
 $("#settings-form").addEventListener("submit", async (event) => { event.preventDefault(); const response = await api("admin/settings", { method: "POST", body: JSON.stringify({ siteTitle: $("#setting-title").value, siteDescription: $("#setting-description").value, accentColor: $("#setting-accent").value, defaultDetailRefreshSeconds: Number($("#setting-detail-refresh").value), monitoringIntervalSeconds: Number($("#setting-monitor-interval").value) }) }); text($("#settings-message"), response.ok ? "Gespeichert." : await message(response)); if (response.ok) await loadPublic(); });
-$("#smtp-form").addEventListener("submit", async (event) => { event.preventDefault(); const response = await api("admin/settings", { method: "POST", body: JSON.stringify({ smtp: { host: $("#smtp-host").value, port: Number($("#smtp-port").value), username: $("#smtp-user").value, password: $("#smtp-password").value, from: $("#smtp-from").value, to: $("#smtp-to").value } }) }); text($("#smtp-message"), response.ok ? "E-Mail-Einstellungen gespeichert." : await message(response)); if (response.ok) await loadAdmin(); });
-$("#smtp-test").addEventListener("click", async () => { const response = await api("admin/notifications/test", { method: "POST", body: "{}" }); text($("#smtp-message"), response.ok ? "Test-E-Mail wurde gesendet." : await message(response)); });
+$("#smtp-form").addEventListener("submit", async (event) => { event.preventDefault(); const webhookUrls = $("#webhook-urls").value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean); const clearWebhooks = $("#clear-webhooks").checked; const response = await api("admin/settings", { method: "POST", body: JSON.stringify({ smtp: { host: $("#smtp-host").value, port: Number($("#smtp-port").value), username: $("#smtp-user").value, password: $("#smtp-password").value, from: $("#smtp-from").value, to: $("#smtp-to").value }, notifications: { latencyThresholdMs: Number($("#alert-latency").value), outageMinutes: Number($("#alert-outage").value) }, ...(webhookUrls.length || clearWebhooks ? { webhookUrls: clearWebhooks ? [] : webhookUrls } : {}) }) }); text($("#smtp-message"), response.ok ? "Benachrichtigungseinstellungen gespeichert." : await message(response)); if (response.ok) await loadAdmin(); });
+$("#smtp-test").addEventListener("click", async () => { const response = await api("admin/notifications/test", { method: "POST", body: "{}" }); text($("#smtp-message"), response.ok ? "Testbenachrichtigung wurde gesendet." : await message(response)); });
 async function download(path, filename) {
   const response = await api(path, { method: "POST", body: "{}" });
   if (!response.ok) throw new Error(await message(response));
@@ -331,4 +362,12 @@ async function download(path, filename) {
 $("#export-backup").addEventListener("click", async () => { try { await download("admin/backup/export", "amp-community-dashboard-v2-backup.json"); text($("#backup-message"), "Sicherung wurde heruntergeladen."); } catch (error) { text($("#backup-message"), error.message); } }); $("#import-backup").addEventListener("change", async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file) return; if (!confirm("Die Serverliste wird ersetzt. Vorher wird automatisch eine Sicherung erstellt. Fortfahren?")) return; if (file.size > 512_000) return text($("#backup-message"), "Die Sicherungsdatei ist zu groß."); try { const response = await api("admin/backup/import", { method: "POST", body: await file.text() }); text($("#backup-message"), response.ok ? `Import abgeschlossen. Automatische Sicherung: ${(await response.json()).automaticBackup}` : await message(response)); if (response.ok) { await loadAdmin(); await loadPublic(); } } catch { text($("#backup-message"), "Die Datei ist keine gültige Sicherung."); } });
 $("#admin-form").addEventListener("submit", async (event) => { event.preventDefault(); const formElement = event.currentTarget; const response = await api("admin/admins", { method: "POST", body: JSON.stringify({ username: $("#new-admin-name").value, password: $("#new-admin-password").value, role: $("#new-admin-role").value }) }); text($("#admin-message"), response.ok ? "Administratorkonto erstellt." : await message(response)); if (response.ok) { formElement.reset(); await loadAdmin(); } }); $("#download-log").addEventListener("click", async () => { try { await download("admin/activity/download", "amp-community-dashboard-v2-aenderungsprotokoll.txt"); } catch (error) { text($("#admin-message"), error.message); } });
 
-loadSession().then(loadPublic).catch((error) => { text($("#live-label"), error.message || "Dashboard nicht erreichbar"); }); window.setInterval(() => { if (!document.hidden) loadPublic().catch(() => {}); }, 30_000);
+function startLiveUpdates() {
+  if (liveEvents) liveEvents.close();
+  liveEvents = new EventSource("api/v1/public/events");
+  liveEvents.addEventListener("dashboard", (event) => { try { applyDashboard(JSON.parse(event.data)); loadMetrics().catch(() => {}); } catch { /* retry is automatic */ } });
+  liveEvents.onerror = () => { text($("#live-label"), "Live-Verbindung wird wiederhergestellt …"); };
+}
+applyTheme(localStorage.getItem("amp_v2_theme") || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+loadSession().then(async () => { await loadPublic(); startLiveUpdates(); }).catch((error) => { text($("#live-label"), error.message || "Dashboard nicht erreichbar"); });

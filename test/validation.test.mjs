@@ -21,3 +21,14 @@ test("blockiert private Zieladressen ohne ausdrückliche Freigabe", () => {
 test("erstellt stabile Slugs", () => {
   assert.equal(slugify("Ärger & Spaß"), "arger-spass");
 });
+
+test("speichert Community-, Spiel- und Monitoring-Adresse getrennt", () => {
+  const server = normalizeServer({
+    name: "Getrennte Ziele", communityUrl: "https://amp.beispiel.de/c/test",
+    connection: { host: "8.8.8.8", port: 27015, profile: "steam" },
+    monitoringTarget: { host: "1.1.1.1", port: 27016, profile: "tcp" }, group: "Öffentlich"
+  }, { id: "test-id" }, 0, false);
+  assert.equal(server.connection.host, "8.8.8.8");
+  assert.equal(server.monitoringTarget.host, "1.1.1.1");
+  assert.equal(server.group, "Öffentlich");
+});

@@ -1,18 +1,19 @@
-AMP Community Dashboard v2.1.1 – Installation für AMP mit Nginx
+AMP Community Dashboard v2.2.0 – Installation für AMP mit Nginx
 
-Diese Anleitung verwendet die Beispiel-Domain `amp.example.com`.
+Diese Anleitung verwendet ausschließlich die Beispiel-Domain amp.example.com.
 
 Voraussetzungen
 
-- Eine laufende AMP-Installation hinter Nginx und HTTPS
+- AMP hinter Nginx und HTTPS
 - Node.js 22 oder neuer
-- Ein Dienstkonto `amp`
+- Ein Dienstkonto amp
 
 1. Dashboard ablegen
 
-   mkdir -p /opt/amp-community-dashboard
-   unzip /opt/amp-community-dashboard-v2.1.1-security.zip -d /opt/amp-community-dashboard
-   chown -R amp:amp /opt/amp-community-dashboard
+   sudo mkdir -p /opt/amp-community-dashboard
+   sudo unzip /opt/amp-community-dashboard-v2.2.0-live-monitoring.zip -d /opt/amp-community-dashboard
+   sudo useradd --system --home /opt/amp-community-dashboard --shell /usr/sbin/nologin amp 2>/dev/null || true
+   sudo chown -R amp:amp /opt/amp-community-dashboard
 
 2. Erstes Administratorkonto erstellen
 
@@ -21,44 +22,42 @@ Voraussetzungen
 
 3. Systemdienst einrichten
 
-   cp /opt/amp-community-dashboard/amp-community-dashboard.service /etc/systemd/system/amp-community-dashboard.service
-   systemctl daemon-reload
-   systemctl enable --now amp-community-dashboard
-   systemctl status amp-community-dashboard --no-pager
+   sudo cp amp-community-dashboard.service /etc/systemd/system/amp-community-dashboard.service
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now amp-community-dashboard
+   sudo systemctl status amp-community-dashboard --no-pager
 
-Die Ausgabe muss `active (running)` zeigen. Der Dienst lauscht nur auf `127.0.0.1:3100`.
+Die Ausgabe muss active (running) zeigen. Der Dienst lauscht nur auf 127.0.0.1:3100.
 
 4. Nginx ergänzen
 
-`nginx-security-http.conf` im globalen Nginx-`http {}`-Bereich einbinden. Danach den Inhalt von `nginx-snippet.conf` in den vorhandenen HTTPS-Serverblock von `amp.example.com` einfügen. Die bestehende AMP-Konfiguration für `/` bleibt unverändert.
+   - nginx-security-http.conf im globalen Nginx-http{}-Bereich einbinden.
+   - Den Inhalt von nginx-snippet.conf in den vorhandenen HTTPS-Serverblock von amp.example.com einfügen.
+   - Die vorhandene AMP-Konfiguration für location / unverändert lassen.
+   - Keine Zeile proxy_cookie_path / /uebersicht/; einsetzen. Der sichere Login-Cookie braucht Path=/.
 
-Wichtig: Keine Zeile `proxy_cookie_path / /uebersicht/;` für das Dashboard verwenden. Der sichere Login-Cookie benötigt `Path=/`.
+   sudo nginx -t && sudo systemctl reload nginx
 
-Dann testen und neu laden:
-
-   nginx -t && systemctl reload nginx
-
-Die Übersicht ist danach unter dieser Beispieladresse erreichbar:
-
-   https://amp.example.com/uebersicht/
+Die Übersicht ist danach unter https://amp.example.com/uebersicht/ erreichbar.
 
 5. Erste Einrichtung
 
-- Oben rechts „Anmelden“ wählen.
-- Den ersten Server mit seiner AMP-Community-Adresse anlegen.
-- Optional mit Vollzugriff die Spielserver-Adresse und den Port ergänzen. Das Abfrageprofil kann auf „Automatisch“ bleiben.
-- Für einen öffentlichen Verbindungsbutton die gleichnamige Option beim Server bewusst aktivieren.
-- Unter „Überwachung“ optional SMTP mit STARTTLS einrichten und eine Test-E-Mail senden.
+- Oben rechts Anmelden wählen.
+- Einen Server mit der AMP-Community-Adresse anlegen.
+- Optional eine Spielserver-Adresse für den Connect-Button und eine abweichende Monitoring-Adresse eintragen.
+- Das Abfrageprofil kann normalerweise auf Automatisch bleiben.
+- Überwachung: SMTP mit STARTTLS und/oder bis zu fünf Discord- bzw. HTTPS-Webhooks einrichten.
+- Die PWA kann über die Browserfunktion App installieren auf dem Handy abgelegt werden.
 
 Interne Spielserver
 
-Private Netzwerkadressen sind standardmäßig blockiert. Falls Spielserver bewusst im selben privaten Netzwerk liegen, in `/etc/systemd/system/amp-community-dashboard.service` diese Zeile setzen:
+Private Netzwerkadressen sind standardmäßig blockiert. Falls Spielserver bewusst im selben privaten Netzwerk liegen, diese Zeile in /etc/systemd/system/amp-community-dashboard.service setzen:
 
    Environment=ALLOW_PRIVATE_NETWORKS=true
 
 Danach:
 
-   systemctl daemon-reload
-   systemctl restart amp-community-dashboard
+   sudo systemctl daemon-reload
+   sudo systemctl restart amp-community-dashboard
 
-Diese Freigabe nur in einem vertrauenswürdigen Netzwerk aktivieren.
+Diese Freigabe nur in einem vertrauenswürdigen Netzwerk verwenden.

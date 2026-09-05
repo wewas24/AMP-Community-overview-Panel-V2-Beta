@@ -201,26 +201,29 @@ async function teamSpeakProbe(address, voicePort, queryPort) {
   });
 }
 
+const providers = {
+  tcp: (address, target) => tcpProbe(address, target.port),
+  steam: (address, target) => steamProbe(address, target.port),
+  minecraft: (address, target) => minecraftProbe(address, target.port, target.host),
+  teamspeak: (address, target) => teamSpeakProbe(address, target.port, target.teamSpeakQueryPort)
+};
+
 async function checkConnection(server, allowPrivateNetworks) {
   if (server.visibility === "maintenance") return stamp("MAINTENANCE", "Der Server befindet sich im Wartungsmodus.");
   if (server.visibility === "disabled" || server.monitoring?.enabled === false) return stamp("DISABLED", "Die Überwachung ist deaktiviert.");
-  if (!server.connection) return stamp("UNKNOWN", "Keine Spielserver-Adresse hinterlegt.");
+  const target = server.monitoringTarget || server.connection;
+  if (!target) return stamp("UNKNOWN", "Keine Monitoring-Adresse hinterlegt.");
   let address;
-  try { address = await resolveSafeTarget(server.connection.host, allowPrivateNetworks); }
+  try { address = await resolveSafeTarget(target.host, allowPrivateNetworks); }
   catch (error) { return stamp(error.code === "DNS_ERROR" ? "DNS_ERROR" : "QUERY_UNSUPPORTED", error.message); }
-  const profile = server.connection.profile || "auto";
-  if (profile === "teamspeak") return teamSpeakProbe(address, server.connection.port, server.connection.teamSpeakQueryPort);
-  if (profile === "minecraft") return minecraftProbe(address, server.connection.port, server.connection.host);
-  const tcpPromise = tcpProbe(address, server.connection.port);
+  const profile = target.profile || "auto";
+  if (providers[profile]) return providers[profile](address, target);
+  const tcpPromise = tcpProbe(address, target.port);
   if (profile === "tcp") return tcpPromise;
-  const steamPromise = steamProbe(address, server.connection.port);
-  if (profile === "steam") {
-    const [steam, tcp] = await Promise.all([steamPromise, tcpPromise]);
-    return steam.state === "ONLINE" ? steam : tcp.state === "ONLINE" ? tcp : steam;
-  }
-  const minecraftPromise = minecraftProbe(address, server.connection.port, server.connection.host);
-  const teamSpeakPromise = server.connection.teamSpeakQueryPort || (server.connection.port >= 9987 && server.connection.port <= 9999)
-    ? teamSpeakProbe(address, server.connection.port, server.connection.teamSpeakQueryPort) : null;
+  const steamPromise = steamProbe(address, target.port);
+  const minecraftPromise = minecraftProbe(address, target.port, target.host);
+  const teamSpeakPromise = target.teamSpeakQueryPort || (target.port >= 9987 && target.port <= 9999)
+    ? teamSpeakProbe(address, target.port, target.teamSpeakQueryPort) : null;
   const [steam, minecraft, tcp, teamSpeak] = await Promise.all([steamPromise, minecraftPromise, tcpPromise, teamSpeakPromise]);
   if (teamSpeak?.state === "ONLINE") return teamSpeak;
   if (steam.state === "ONLINE") return steam;
@@ -231,14 +234,17 @@ async function checkConnection(server, allowPrivateNetworks) {
 }
 
 export class StatusMonitor {
-  constructor(store, options, onChange = async () => {}) {
+  constructor(store, options, onChange = async () => {}, onObservation = async () => {}) {
     this.store = store;
     this.options = options;
     this.onChange = onChange;
+    this.onObservation = onObservation;
     this.running = null;
+    this.stopped = false;
   }
 
   async refresh() {
+    if (this.stopped) return;
     if (this.running) return this.running;
     this.running = (async () => {
       const servers = this.store.allServers();
@@ -257,6 +263,9 @@ export class StatusMonitor {
     const changedToOffline = saved.previous?.state === "ONLINE" && ["OFFLINE", "TIMEOUT", "CONNECTION_REFUSED"].includes(saved.current.state);
     const changedToOnline = saved.previous && ["OFFLINE", "TIMEOUT", "CONNECTION_REFUSED"].includes(saved.previous.state) && saved.current.state === "ONLINE";
     if (changedToOffline || changedToOnline) await this.onChange(server, saved.current, changedToOffline ? "offline" : "recovered");
+    await this.onObservation(server, saved.current, saved);
     return saved.current;
   }
+
+  stop() { this.stopped = true; }
 }
