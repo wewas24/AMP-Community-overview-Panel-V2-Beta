@@ -27,6 +27,21 @@ export function validHost(value) {
   return isIP(host) || /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(host);
 }
 
+export function normalizeTrustedCommunityDomains(value) {
+  const entries = Array.isArray(value) ? value : typeof value === "string" ? value.split(/[\r\n,]+/) : [];
+  if (entries.length > 40) throw new Error("Es sind maximal 40 vertrauenswürdige Community-Domains erlaubt.");
+  const domains = [];
+  for (const entry of entries) {
+    const domain = String(entry || "").trim().toLowerCase().replace(/\.$/, "");
+    if (!domain) continue;
+    // This is intentionally a hostname, not a URL. It may only constrain
+    // discovery and can never expand the network policy for a target.
+    if (isIP(domain) || !validHost(domain)) throw new Error("Jede vertrauenswürdige Community-Domain muss ein öffentlicher Domainname ohne https:// oder Pfad sein.");
+    if (!domains.includes(domain)) domains.push(domain);
+  }
+  return domains;
+}
+
 export function connectionFromInput(input, allowPrivateNetworks) {
   const source = input && typeof input === "object" ? input : {};
   const host = String(source.host || "").trim().replace(/^\[|\]$/g, "");
@@ -127,6 +142,9 @@ export function normalizeSettings(input, previous, defaultSmtpPort) {
     defaultDetailRefreshSeconds: input?.defaultDetailRefreshSeconds === undefined ? previous.defaultDetailRefreshSeconds : Math.max(0, Math.min(3600, Number(input.defaultDetailRefreshSeconds) || 0)),
     monitoringIntervalSeconds: input?.monitoringIntervalSeconds === undefined ? previous.monitoringIntervalSeconds : Math.max(30, Math.min(3600, Number(input.monitoringIntervalSeconds) || 30))
   };
+  next.trustedCommunityDomains = input?.trustedCommunityDomains === undefined
+    ? Array.isArray(previous.trustedCommunityDomains) ? previous.trustedCommunityDomains : []
+    : normalizeTrustedCommunityDomains(input.trustedCommunityDomains);
   const smtp = input?.smtp && typeof input.smtp === "object" ? input.smtp : {};
   next.smtp = { ...previous.smtp };
   delete next.smtp.password;

@@ -49,4 +49,4 @@ export const permissions = {
   custom: new Set()
 };
 
-export const publicStates = new Set(["ONLINE", "OFFLINE", "TIMEOUT", "CONNECTION_REFUSED", "DNS_ERROR", "QUERY_FAILED", "QUERY_UNSUPPORTED", "MAINTENANCE", "DISABLED", "UNKNOWN"]);
+export const publicStates = new Set(["ONLINE", "REACHABLE", "OFFLINE", "TIMEOUT", "CONNECTION_REFUSED", "DNS_ERROR", "QUERY_FAILED", "QUERY_UNSUPPORTED", "MAINTENANCE", "DISABLED", "UNKNOWN"]);

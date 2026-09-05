@@ -72,6 +72,7 @@ function defaultSettings() {
     accentColor: "#42e8a5",
     defaultDetailRefreshSeconds: config.defaultRefreshSeconds,
     monitoringIntervalSeconds: config.defaultMonitorSeconds,
+    trustedCommunityDomains: [],
     smtp: { host: "", port: config.defaultSmtpPort, username: "", from: "", to: "" },
     notifications: { notifyOffline: true, notifyRecovered: true, latencyThresholdMs: 0, outageMinutes: 0 }
   };
@@ -262,9 +263,10 @@ export class Store {
     const previous = this.getStatus(serverId);
     const changed = !previous || previous.state !== status.state;
     const timestamp = status.checkedAt || now();
-    const lastSuccess = status.state === "ONLINE" ? timestamp : previous?.last_success_at || null;
+    const healthy = ["ONLINE", "REACHABLE"].includes(status.state);
+    const lastSuccess = healthy ? timestamp : previous?.last_success_at || null;
     const stateSince = changed ? timestamp : previous?.state_since_at || timestamp;
-    const failures = status.state === "ONLINE" ? 0 : (previous?.failure_count || 0) + 1;
+    const failures = healthy ? 0 : (previous?.failure_count || 0) + 1;
     const addHistory = changed;
     const addMetrics = !previous?.last_metric_at || Date.parse(timestamp) - Date.parse(previous.last_metric_at) >= 5 * 60_000;
     this.db.prepare(`INSERT INTO status_current(server_id,state,detail,latency_ms,players,max_players,version,map_name,checked_at,last_success_at,state_since_at,failure_count,last_history_at,last_metric_at)
@@ -304,11 +306,11 @@ export class Store {
     let online = 0;
     for (const row of rows) {
       const at = Math.min(until, Date.parse(row.checked_at));
-      if (state === "ONLINE") online += Math.max(0, at - cursor);
+      if (["ONLINE", "REACHABLE"].includes(state)) online += Math.max(0, at - cursor);
       cursor = at;
       state = row.state;
     }
-    if (state === "ONLINE") online += Math.max(0, until - cursor);
+    if (["ONLINE", "REACHABLE"].includes(state)) online += Math.max(0, until - cursor);
     return Math.round((online / (until - from)) * 10_000) / 100;
   }
 

@@ -25,7 +25,7 @@ function publicSettings(settings) {
 
 async function adminSettings(settings) {
   const webhookCount = (await store.getWebhookUrls()).length;
-  return { ...publicSettings(settings), monitoringIntervalSeconds: settings.monitoringIntervalSeconds, notifications: settings.notifications, smtp: { host: settings.smtp.host, port: settings.smtp.port, username: settings.smtp.username, from: settings.smtp.from, to: settings.smtp.to, passwordConfigured: await store.smtpPasswordConfigured() }, webhookCount };
+  return { ...publicSettings(settings), monitoringIntervalSeconds: settings.monitoringIntervalSeconds, trustedCommunityDomains: settings.trustedCommunityDomains || [], notifications: settings.notifications, smtp: { host: settings.smtp.host, port: settings.smtp.port, username: settings.smtp.username, from: settings.smtp.from, to: settings.smtp.to, passwordConfigured: await store.smtpPasswordConfigured() }, webhookCount };
 }
 
 function publicServer(server, status) {
@@ -53,7 +53,7 @@ function publicConnectUrl(server) {
 }
 
 function adminServer(server, status) {
-  return { ...publicServer(server, status), connectUrl: server.connectUrl || "", monitoring: server.monitoring, connection: server.connection, createdAt: server.createdAt, updatedAt: server.updatedAt, sortOrder: server.sortOrder };
+  return { ...publicServer(server, status), connectUrl: server.connectUrl || "", monitoring: server.monitoring, connection: server.connection, monitoringTarget: server.monitoringTarget || null, createdAt: server.createdAt, updatedAt: server.updatedAt, sortOrder: server.sortOrder };
 }
 
 function frameSources() {
@@ -140,7 +140,7 @@ async function body(request, maximum = 128_000) {
 }
 
 function activityText(entries) {
-  const lines = ["AMP Community Dashboard v2.3.1 – Änderungsprotokoll", `Erstellt: ${new Date().toISOString()}`, "Aufbewahrung: sieben Tage", ""];
+  const lines = ["AMP Community Dashboard v2.4.0 – Änderungsprotokoll", `Erstellt: ${new Date().toISOString()}`, "Aufbewahrung: sieben Tage", ""];
   for (const entry of entries) lines.push(`${entry.created_at} · ${entry.username} · ${entry.action}${entry.subject ? ` · ${entry.subject}` : ""}${entry.detail ? ` – ${entry.detail}` : ""}`);
   return `${lines.join("\n")}\n`;
 }
@@ -185,7 +185,7 @@ async function sendRuleAlert(server, key, subject, message) {
 async function observedStatus(server, status) {
   events.publish("dashboard", dashboardPayload());
   const rules = store.getSettings().notifications || {};
-  if (Number(rules.latencyThresholdMs) > 0 && status.state === "ONLINE" && Number(status.latencyMs) >= Number(rules.latencyThresholdMs)) {
+  if (Number(rules.latencyThresholdMs) > 0 && ["ONLINE", "REACHABLE"].includes(status.state) && Number(status.latencyMs) >= Number(rules.latencyThresholdMs)) {
     await sendRuleAlert(server, "high-latency", `Hohe Latenz: ${server.name}`, `Gemessene Latenz: ${status.latencyMs} ms. Grenzwert: ${rules.latencyThresholdMs} ms.`);
   }
   if (Number(rules.outageMinutes) > 0 && ["OFFLINE", "TIMEOUT", "CONNECTION_REFUSED"].includes(status.state) && status.stateSinceAt) {
@@ -204,10 +204,10 @@ function statusWithFreshness(server, status) {
 
 function healthScore(server, status, uptime) {
   if (!status?.checkedAt || status.stale) return 0;
-  const availability = uptime ?? (status.state === "ONLINE" ? 100 : 0);
+  const availability = uptime ?? (["ONLINE", "REACHABLE"].includes(status.state) ? 100 : 0);
   const latency = Number(status.latencyMs || 0);
   const latencyScore = !latency ? 15 : latency < 80 ? 20 : latency < 180 ? 15 : latency < 400 ? 8 : 2;
-  const stateScore = status.state === "ONLINE" ? 20 : 0;
+  const stateScore = status.state === "ONLINE" ? 20 : status.state === "REACHABLE" ? 16 : 0;
   return Math.max(0, Math.min(100, Math.round(availability * 0.6 + latencyScore + stateScore)));
 }
 
@@ -219,7 +219,7 @@ function dashboardPayload() {
     if (server.visibility === "hidden") continue;
     summary.total += 1;
     const state = statusWithFreshness(server, statuses.get(server.id)).stale ? "UNKNOWN" : statuses.get(server.id)?.state || "UNKNOWN";
-    if (state === "ONLINE") summary.online += 1;
+    if (["ONLINE", "REACHABLE"].includes(state)) summary.online += 1;
     else if (state === "MAINTENANCE") summary.maintenance += 1;
     else if (["OFFLINE", "CONNECTION_REFUSED", "TIMEOUT"].includes(state)) summary.offline += 1;
     else summary.unknown += 1;
@@ -272,7 +272,7 @@ function uploadedImage(input) {
 
 async function api(request, response, url) {
   const path = url.pathname;
-  if (request.method === "GET" && path === "/health") return json(response, 200, { ok: true, version: "2.2.0", time: new Date().toISOString() });
+  if (request.method === "GET" && path === "/health") return json(response, 200, { ok: true, version: "2.4.0", time: new Date().toISOString() });
   if (request.method === "GET" && path === "/ready") return json(response, 200, { ready: Boolean(store.db), monitoring: !monitor.stopped });
   if (request.method === "GET" && path === "/api/v1/public/events") { setHeaders(response); events.subscribe(request, response); return; }
   if (request.method === "GET" && ["/api/v1/public/servers", "/api/servers"].includes(path)) return json(response, 200, dashboardPayload());
@@ -322,7 +322,7 @@ async function api(request, response, url) {
     const input = await body(request); const existing = store.allServers();
     if (existing.length >= config.maxServers) return error(response, 400, `Es können maximal ${config.maxServers} Server gespeichert werden.`);
     const next = normalizeServer(input, { id: randomUUID() }, existing.length, config.allowPrivateNetworks);
-    if (session.role !== "owner" && next.connection) return error(response, 403, "Nur Vollzugriff darf eine Spielserver-Adresse anlegen oder ändern.");
+    if (session.role !== "owner" && (next.connection || next.monitoringTarget)) return error(response, 403, "Nur Vollzugriff darf eine Spielserver- oder Monitoring-Adresse anlegen oder ändern.");
     await validateExternalIcon(next);
     if (existing.some((server) => server.slug === next.slug)) return error(response, 409, "Dieser Server-Slug ist bereits vergeben.");
     store.saveServer(next); store.addActivity(session.username, "Server erstellt", next.name); events.publish("dashboard", dashboardPayload());
@@ -330,7 +330,7 @@ async function api(request, response, url) {
   }
   if (request.method === "POST" && remainder === "servers/discover") {
     const input = await body(request, 8_192);
-    const result = await discoverCommunity(input?.communityUrl, config.allowPrivateNetworks);
+    const result = await discoverCommunity(input?.communityUrl, config.allowPrivateNetworks, store.getSettings().trustedCommunityDomains || []);
     store.addActivity(session.username, result.found ? "Spieladresse automatisch ermittelt" : "Keine Spieladresse auf Community-Seite gefunden", "", result.found ? "ok" : "error", result.source);
     return json(response, 200, result);
   }
@@ -338,7 +338,7 @@ async function api(request, response, url) {
   if (serverId && request.method === "PATCH") {
     const old = store.findServer(serverId); if (!old) return error(response, 404, "Server nicht gefunden.");
     const next = normalizeServer(await body(request), old, old.sortOrder, config.allowPrivateNetworks);
-    if (session.role !== "owner" && !sameConnection(old.connection, next.connection)) return error(response, 403, "Nur Vollzugriff darf eine Spielserver-Adresse anlegen oder ändern.");
+    if (session.role !== "owner" && (!sameConnection(old.connection, next.connection) || !sameConnection(old.monitoringTarget, next.monitoringTarget))) return error(response, 403, "Nur Vollzugriff darf eine Spielserver- oder Monitoring-Adresse anlegen oder ändern.");
     await validateExternalIcon(next);
     if (store.allServers().some((server) => server.id !== old.id && server.slug === next.slug)) return error(response, 409, "Dieser Server-Slug ist bereits vergeben.");
     store.saveServer(next); store.addActivity(session.username, "Server bearbeitet", next.name); events.publish("dashboard", dashboardPayload());
@@ -362,7 +362,7 @@ async function api(request, response, url) {
   const testId = /^servers\/([^/]+)\/test$/.exec(remainder)?.[1];
   if (testId && request.method === "POST") {
     const server = store.findServer(testId); if (!server) return error(response, 404, "Server nicht gefunden.");
-    const status = await monitor.refreshServer(server, true); store.addActivity(session.username, "Verbindung getestet", server.name, status.state === "ONLINE" ? "ok" : "error"); return json(response, 200, { status });
+    const status = await monitor.refreshServer(server, true); store.addActivity(session.username, "Verbindung getestet", server.name, ["ONLINE", "REACHABLE"].includes(status.state) ? "ok" : "error"); return json(response, 200, { status });
   }
   if (request.method === "POST" && remainder === "uploads") {
     const input = await body(request, Math.ceil(config.maxUploadBytes * 1.5) + 16_384);
@@ -392,7 +392,7 @@ async function api(request, response, url) {
     const saved = store.saveSettings(settings); store.addActivity(session.username, "Seiteneinstellungen geändert"); events.publish("dashboard", dashboardPayload()); return json(response, 200, await adminSettings(saved));
   }
   if (request.method === "POST" && remainder === "notifications/test") {
-    const deliveries = await sendNotifications("Test: AMP Community Dashboard v2.3.1", "Dies ist eine Testbenachrichtigung vom AMP Community Dashboard.");
+    const deliveries = await sendNotifications("Test: AMP Community Dashboard v2.4.0", "Dies ist eine Testbenachrichtigung vom AMP Community Dashboard.");
     if (!deliveries.length) return error(response, 400, "Es ist kein funktionierender SMTP- oder Webhook-Kanal eingerichtet.");
     store.addActivity(session.username, "Benachrichtigungstest gesendet", "", "ok", deliveries.join(", ")); return json(response, 200, { ok: true });
   }
@@ -485,7 +485,7 @@ function scheduleMonitoring() {
 }
 void monitor.refresh();
 scheduleMonitoring();
-server.listen(config.port, config.host, () => console.log(`AMP Community Dashboard v2.3.1 läuft auf http://${config.host}:${config.port}`));
+server.listen(config.port, config.host, () => console.log(`AMP Community Dashboard v2.4.0 läuft auf http://${config.host}:${config.port}`));
 
 let shuttingDown = false;
 async function shutdown() {

@@ -36,7 +36,9 @@ async function tcpProbe(address, port) {
     };
     const timer = setTimeout(() => finish("TIMEOUT", "Der Spielport hat nicht rechtzeitig geantwortet."), config.statusTimeoutMs);
     timer.unref?.();
-    socket.once("connect", () => finish("ONLINE", "Der Spielport antwortet."));
+    // TCP proves that this address and port are reachable, but it does not
+    // prove a particular game protocol. Keep that distinction in the UI.
+    socket.once("connect", () => finish("REACHABLE", "Der Spielport ist per TCP erreichbar."));
     socket.once("error", (error) => finish(error?.code === "ECONNREFUSED" ? "CONNECTION_REFUSED" : "QUERY_FAILED", error?.code === "ECONNREFUSED" ? "Der Spielport ist geschlossen." : "Die TCP-Verbindung konnte nicht hergestellt werden."));
   });
 }
@@ -217,9 +219,18 @@ async function checkConnection(server, allowPrivateNetworks) {
   try { address = await resolveSafeTarget(target.host, allowPrivateNetworks); }
   catch (error) { return stamp(error.code === "DNS_ERROR" ? "DNS_ERROR" : "QUERY_UNSUPPORTED", error.message); }
   const profile = target.profile || "auto";
-  if (providers[profile]) return providers[profile](address, target);
+  if (profile === "tcp") return tcpProbe(address, target.port);
+  if (["steam", "minecraft", "teamspeak"].includes(profile)) {
+    const primary = await providers[profile](address, target);
+    if (primary.state === "ONLINE") return primary;
+    // A protocol reply is ideal because it yields game data. A completed TCP
+    // handshake is still a real measured reachability result and must never
+    // be shown as "unknown" merely because the richer protocol failed.
+    const reachablePort = profile === "teamspeak" ? (target.teamSpeakQueryPort || 10011) : target.port;
+    const fallback = await tcpProbe(address, reachablePort);
+    return fallback.state === "REACHABLE" ? fallback : primary;
+  }
   const tcpPromise = tcpProbe(address, target.port);
-  if (profile === "tcp") return tcpPromise;
   const steamPromise = steamProbe(address, target.port);
   const minecraftPromise = minecraftProbe(address, target.port, target.host);
   const teamSpeakPromise = target.teamSpeakQueryPort || (target.port >= 9987 && target.port <= 9999)
@@ -228,7 +239,7 @@ async function checkConnection(server, allowPrivateNetworks) {
   if (teamSpeak?.state === "ONLINE") return teamSpeak;
   if (steam.state === "ONLINE") return steam;
   if (minecraft.state === "ONLINE") return minecraft;
-  if (tcp.state === "ONLINE") return tcp;
+  if (tcp.state === "REACHABLE") return tcp;
   if (tcp.state === "CONNECTION_REFUSED") return tcp;
   return steam.state !== "TIMEOUT" ? steam : minecraft.state !== "TIMEOUT" ? minecraft : tcp;
 }
@@ -260,8 +271,9 @@ export class StatusMonitor {
     if (!force && previous?.checked_at && Date.now() - Date.parse(previous.checked_at) < intervalMs) return this.store.statusRow(previous);
     const status = await checkConnection(server, this.options.allowPrivateNetworks);
     const saved = this.store.saveStatus(server.id, status);
-    const changedToOffline = saved.previous?.state === "ONLINE" && ["OFFLINE", "TIMEOUT", "CONNECTION_REFUSED"].includes(saved.current.state);
-    const changedToOnline = saved.previous && ["OFFLINE", "TIMEOUT", "CONNECTION_REFUSED"].includes(saved.previous.state) && saved.current.state === "ONLINE";
+    const healthy = new Set(["ONLINE", "REACHABLE"]);
+    const changedToOffline = healthy.has(saved.previous?.state) && !healthy.has(saved.current.state);
+    const changedToOnline = saved.previous && !healthy.has(saved.previous.state) && healthy.has(saved.current.state);
     if (changedToOffline || changedToOnline) await this.onChange(server, saved.current, changedToOffline ? "offline" : "recovered");
     await this.onObservation(server, saved.current, saved);
     return saved.current;

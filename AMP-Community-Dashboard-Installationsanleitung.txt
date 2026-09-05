@@ -1,4 +1,4 @@
-AMP Community Dashboard v2.3.1 – Installation für AMP mit Nginx
+AMP Community Dashboard v2.4.0 – Installation für AMP mit Nginx
 
 Diese Anleitung verwendet ausschließlich die Beispiel-Domain amp.example.com.
 
@@ -11,7 +11,7 @@ Voraussetzungen
 1. Dashboard ablegen
 
    sudo mkdir -p /opt/amp-community-dashboard
-   sudo unzip /opt/amp-community-dashboard-v2.3.1-simple-ui-public-toggle.zip -d /opt/amp-community-dashboard
+   sudo unzip /opt/amp-community-dashboard-v2.4.0-community-discovery.zip -d /opt/amp-community-dashboard
    sudo useradd --system --home /opt/amp-community-dashboard --shell /usr/sbin/nologin amp 2>/dev/null || true
    sudo chown -R amp:amp /opt/amp-community-dashboard
 
@@ -43,9 +43,10 @@ Die Übersicht ist danach unter https://amp.example.com/uebersicht/ erreichbar.
 5. Erste Einrichtung
 
 - Oben rechts Anmelden wählen.
-- Einen Server mit der AMP-Community-Adresse anlegen.
+- Einen Server mit der AMP-Community-Adresse anlegen und „Server erkennen“ wählen. Die Community-Seite liefert in vielen Fällen Spieladresse und Port automatisch.
 - Optional eine Spielserver-Adresse für den Connect-Button und eine abweichende Monitoring-Adresse eintragen.
 - Das Abfrageprofil kann normalerweise auf Automatisch bleiben.
+- Optional im erweiterten Bereich „Einstellungen → Allgemein“ nur die Community-Domains eintragen, die automatisch ausgelesen werden dürfen. Eine Domain pro Zeile, ohne https:// oder Pfad.
 - Überwachung: SMTP mit STARTTLS und/oder bis zu fünf Discord- bzw. HTTPS-Webhooks einrichten.
 - Die PWA kann über die Browserfunktion App installieren auf dem Handy abgelegt werden.
 

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizeServer, slugify } from "../src/validation.mjs";
+import { normalizeServer, normalizeSettings, slugify } from "../src/validation.mjs";
 
 test("erstellt einen sicheren, einfachen Standardserver", () => {
   const server = normalizeServer({ name: "Mein Test Server", communityUrl: "https://amp.beispiel.de/c/test", connectUrl: "steam://connect/8.8.8.8:53", connection: { host: "8.8.8.8", port: 53, profile: "auto" } }, { id: "test-id" }, 0, false);
@@ -31,4 +31,10 @@ test("speichert Community-, Spiel- und Monitoring-Adresse getrennt", () => {
   assert.equal(server.connection.host, "8.8.8.8");
   assert.equal(server.monitoringTarget.host, "1.1.1.1");
   assert.equal(server.group, "Öffentlich");
+});
+
+test("normalisiert vertrauenswürdige Community-Domains ausschließlich als Domains", () => {
+  const settings = normalizeSettings({ trustedCommunityDomains: ["amp.example.com", "AMP.EXAMPLE.COM", "status.example.net."] }, { siteTitle: "Test", siteDescription: "", accentColor: "#42e8a5", defaultDetailRefreshSeconds: 0, monitoringIntervalSeconds: 30, smtp: {}, notifications: {} }, 587);
+  assert.deepEqual(settings.trustedCommunityDomains, ["amp.example.com", "status.example.net"]);
+  assert.throws(() => normalizeSettings({ trustedCommunityDomains: ["https://amp.example.com"] }, settings, 587), /Community-Domain/);
 });

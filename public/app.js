@@ -29,6 +29,7 @@ function stateInfo(status = {}) {
   if (status.stale) return { label: "Veraltet", className: "unknown" };
   const raw = status.state || "UNKNOWN";
   if (raw === "ONLINE") return { label: "Online", className: "online" };
+  if (raw === "REACHABLE") return { label: "Erreichbar", className: "online" };
   if (raw === "MAINTENANCE") return { label: "Wartung", className: "maintenance" };
   if (["OFFLINE", "CONNECTION_REFUSED", "TIMEOUT"].includes(raw)) return { label: "Offline", className: "offline" };
   return { label: "Unbekannt", className: "unknown" };
@@ -254,12 +255,53 @@ function discoveredConnect(value) {
   } catch { /* ignored: this is only a same-origin fallback */ }
   return null;
 }
+function browserEndpoint(value) {
+  const source = String(value || "").trim();
+  const match = /^(?:\[([0-9a-f:.]+)\]|([a-z0-9](?:[a-z0-9.-]*[a-z0-9])?|\d{1,3}(?:\.\d{1,3}){3})):(\d{1,5})$/i.exec(source);
+  const port = Number(match?.[3]);
+  return match && Number.isInteger(port) && port >= 1 && port <= 65535 ? { host: match[1] || match[2], port } : null;
+}
+function browserProfile(value) {
+  const source = String(value || "").toLowerCase();
+  if (/(teamspeak|ts3|ts5)/.test(source)) return "teamspeak";
+  if (/(minecraft|java edition)/.test(source)) return "minecraft";
+  if (/(steam|source engine|a2s|arma|ark|rust|valheim|palworld|satisfactory|counter.?strike)/.test(source)) return "steam";
+  return "auto";
+}
+function frameAddressDiscovery(document, communityUrl) {
+  const context = document.body?.innerText || "";
+  const profile = browserProfile(context);
+  const tags = [...document.querySelectorAll("[data-connect],[data-connection],[data-address],[data-server],[data-endpoint],[data-host],a[href]")];
+  for (const tag of tags) {
+    const values = [tag.getAttribute("href"), tag.dataset.connect, tag.dataset.connection, tag.dataset.address, tag.dataset.server, tag.dataset.endpoint, tag.dataset.host].filter(Boolean);
+    for (const value of values) {
+      const linked = discoveredConnect(value);
+      if (linked) return linked;
+      const direct = browserEndpoint(value);
+      if (direct) return { connection: { ...direct, profile }, connectUrl: "", source: "Adresse im Community-Iframe" };
+    }
+    const direct = browserEndpoint(`${tag.dataset.host || tag.dataset.address || tag.dataset.server || ""}:${tag.dataset.port || tag.dataset.gamePort || tag.dataset.queryPort || ""}`);
+    if (direct) return { connection: { ...direct, profile }, connectUrl: "", source: "Datenfeld im Community-Iframe" };
+  }
+  const endpoints = context.match(/(?:\[[0-9a-f:.]+\]|(?:\d{1,3}\.){3}\d{1,3}|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}):\d{1,5}/gi) || [];
+  const page = new URL(communityUrl, window.location.href);
+  for (const value of endpoints) {
+    const direct = browserEndpoint(value);
+    if (!direct || (direct.host.toLowerCase() === page.hostname.toLowerCase() && direct.port === Number(page.port || 443))) continue;
+    return { connection: { ...direct, profile }, connectUrl: "", source: "Sichtbare Adresse im Community-Iframe" };
+  }
+  return null;
+}
 function applyDiscovery(found) {
   const changes = [];
   if (found.title && !$("#server-name").value.trim()) { field("#server-name", found.title); changes.push("Name"); }
   if (found.connection?.host && !$("#server-host").value.trim()) { field("#server-host", found.connection.host); changes.push("Spieladresse"); }
   if (found.connection?.port && !$("#server-port").value) { field("#server-port", found.connection.port); changes.push("Port"); }
   if (found.connection?.profile && $("#server-profile").value === "auto") { field("#server-profile", found.connection.profile); changes.push("Abfrageprofil"); }
+  if (found.connection?.host && !$("#monitor-host").value.trim()) { field("#monitor-host", found.connection.host); changes.push("Monitoring-Adresse"); }
+  if (found.connection?.port && !$("#monitor-port").value) { field("#monitor-port", found.connection.port); changes.push("Monitoring-Port"); }
+  if (found.connection?.profile && $("#monitor-profile").value === "auto") { field("#monitor-profile", found.connection.profile); changes.push("Monitoring-Profil"); }
+  if (found.connection?.profile === "teamspeak" && !$("#server-ts-query").value) { field("#server-ts-query", 10011); field("#monitor-ts-query", 10011); changes.push("TeamSpeak-Query-Port"); }
   if (found.connectUrl && !$("#server-connect-url").value.trim()) { field("#server-connect-url", found.connectUrl); changes.push("Verbindungslink"); }
   return changes;
 }
@@ -276,8 +318,8 @@ async function sameOriginFrameDiscovery(communityUrl) {
     frame.title = "";
     frame.addEventListener("load", () => window.setTimeout(() => {
       try {
-        const links = [...(frame.contentDocument?.querySelectorAll("a[href]") || [])];
-        for (const link of links) { const found = discoveredConnect(link.href); if (found) return finish(found); }
+        const found = frameAddressDiscovery(frame.contentDocument, url.toString());
+        if (found) return finish(found);
       } catch { /* foreign frames are intentionally not readable */ }
       finish(null);
     }, 350), { once: true });
@@ -296,13 +338,13 @@ async function discoverServerAddress() {
     const response = await api("admin/servers/discover", { method: "POST", body: JSON.stringify({ communityUrl }) });
     if (!response.ok) return setServerMessage(await message(response), true);
     let found = await response.json();
-    let changes = applyDiscovery(found);
-    if (!found.connection && !found.connectUrl) {
-      const frameFound = await sameOriginFrameDiscovery(communityUrl);
-      if (frameFound) { found = { ...found, ...frameFound, found: true, confidence: "high" }; changes = applyDiscovery(found); }
-    }
-    if (changes.length) setServerMessage(`${found.source}: ${changes.join(", ")} übernommen. Bitte vor dem Speichern prüfen.`);
-    else setServerMessage("Kein öffentlicher Connect-Link gefunden. Adresse und Link können weiterhin manuell ergänzt werden.", true);
+    const frameFound = await sameOriginFrameDiscovery(communityUrl);
+    if (frameFound?.connectUrl || (!found.connection && frameFound?.connection)) found = { ...found, ...frameFound, found: true, confidence: "high" };
+    const changes = applyDiscovery(found);
+    if (changes.length) {
+      const alternatives = Math.max(0, Number(found.candidates?.length || 0) - 1);
+      setServerMessage(`${found.source}: ${changes.join(", ")} übernommen${found.application ? ` · erkannt: ${found.application}` : ""}${alternatives ? ` · ${alternatives} weitere Adresse(n) wurden gefunden` : ""}. Bitte vor dem Speichern prüfen.`);
+    } else setServerMessage("Auf der Community-Seite wurde keine verwendbare Spieladresse gefunden. Adresse und Port können weiterhin manuell ergänzt werden.", true);
   } catch (error) {
     setServerMessage(error.message || "Die Community-Seite konnte nicht automatisch geprüft werden.", true);
   } finally {
@@ -344,7 +386,7 @@ async function duplicate(server) { const response = await api(`admin/servers/${s
 async function removeServer(server) { if (!confirm(`Server „${server.name}“ wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.`)) return; const response = await api(`admin/servers/${server.id}`, { method: "DELETE" }); if (!response.ok) return setServerMessage(await message(response), true); resetServerForm(); await loadAdmin(); await loadPublic(); }
 
 function fillSettings(settings) {
-  field("#setting-title", settings.siteTitle); field("#setting-description", settings.siteDescription); field("#setting-accent", settings.accentColor || "#42e8a5"); field("#setting-detail-refresh", settings.defaultDetailRefreshSeconds); field("#setting-monitor-interval", settings.monitoringIntervalSeconds); field("#smtp-host", settings.smtp?.host); field("#smtp-port", settings.smtp?.port || 587); field("#smtp-user", settings.smtp?.username); field("#smtp-from", settings.smtp?.from); field("#smtp-to", settings.smtp?.to); field("#alert-latency", settings.notifications?.latencyThresholdMs || 0); field("#alert-outage", settings.notifications?.outageMinutes || 0); $("#notify-offline").checked = settings.notifications?.notifyOffline !== false; $("#notify-recovered").checked = settings.notifications?.notifyRecovered !== false; $("#smtp-password").value = ""; $("#webhook-urls").value = ""; $("#clear-webhooks").checked = false; $("#smtp-password").placeholder = settings.smtp?.passwordConfigured ? "Passwort ist gespeichert – nur zum Ändern eingeben" : "Passwort eingeben"; $("#webhook-urls").placeholder = settings.webhookCount ? `${settings.webhookCount} Webhook(s) gespeichert – nur zum Ersetzen hier eintragen` : "optional: Discord- oder Webhook-Adresse";
+  field("#setting-title", settings.siteTitle); field("#setting-description", settings.siteDescription); field("#setting-accent", settings.accentColor || "#42e8a5"); field("#setting-detail-refresh", settings.defaultDetailRefreshSeconds); field("#setting-monitor-interval", settings.monitoringIntervalSeconds); field("#setting-trusted-domains", (settings.trustedCommunityDomains || []).join("\n")); field("#smtp-host", settings.smtp?.host); field("#smtp-port", settings.smtp?.port || 587); field("#smtp-user", settings.smtp?.username); field("#smtp-from", settings.smtp?.from); field("#smtp-to", settings.smtp?.to); field("#alert-latency", settings.notifications?.latencyThresholdMs || 0); field("#alert-outage", settings.notifications?.outageMinutes || 0); $("#notify-offline").checked = settings.notifications?.notifyOffline !== false; $("#notify-recovered").checked = settings.notifications?.notifyRecovered !== false; $("#smtp-password").value = ""; $("#webhook-urls").value = ""; $("#clear-webhooks").checked = false; $("#smtp-password").placeholder = settings.smtp?.passwordConfigured ? "Passwort ist gespeichert – nur zum Ändern eingeben" : "Passwort eingeben"; $("#webhook-urls").placeholder = settings.webhookCount ? `${settings.webhookCount} Webhook(s) gespeichert – nur zum Ersetzen hier eintragen` : "optional: Discord- oder Webhook-Adresse";
 }
 function renderAdmins(admins) {
   const list = $("#admin-list"); list.replaceChildren();
@@ -398,7 +440,7 @@ $("#logout-button").addEventListener("click", async () => { await api("logout", 
 $("#cancel-edit").addEventListener("click", resetServerForm); $("#server-form").addEventListener("submit", async (event) => { event.preventDefault(); const id = $("#server-id").value; try { const response = await api(id ? `admin/servers/${id}` : "admin/servers", { method: id ? "PATCH" : "POST", body: JSON.stringify(await uploadSelectedBanner(serverPayload())) }); if (!response.ok) return setServerMessage(await message(response), true); setServerMessage("Server gespeichert."); resetServerForm(); await loadAdmin(); await loadPublic(); } catch (error) { setServerMessage(error.message || "Der Server konnte nicht gespeichert werden.", true); } });
 $("#discover-server").addEventListener("click", discoverServerAddress);
 $("#test-server").addEventListener("click", async () => { const id = $("#server-id").value; if (!id) return setServerMessage("Bitte den Server zuerst speichern.", true); const response = await api(`admin/servers/${id}/test`, { method: "POST", body: "{}" }); if (!response.ok) return setServerMessage(await message(response), true); const result = await response.json(); setServerMessage(`${stateInfo(result.status).label}: ${result.status.detail}`); await loadAdmin(); await loadPublic(); });
-$("#settings-form").addEventListener("submit", async (event) => { event.preventDefault(); const response = await api("admin/settings", { method: "POST", body: JSON.stringify({ siteTitle: $("#setting-title").value, siteDescription: $("#setting-description").value, accentColor: $("#setting-accent").value, defaultDetailRefreshSeconds: Number($("#setting-detail-refresh").value), monitoringIntervalSeconds: Number($("#setting-monitor-interval").value) }) }); text($("#settings-message"), response.ok ? "Gespeichert." : await message(response)); if (response.ok) await loadPublic(); });
+$("#settings-form").addEventListener("submit", async (event) => { event.preventDefault(); const trustedCommunityDomains = $("#setting-trusted-domains").value.split(/\r?\n|,/).map((value) => value.trim()).filter(Boolean); const response = await api("admin/settings", { method: "POST", body: JSON.stringify({ siteTitle: $("#setting-title").value, siteDescription: $("#setting-description").value, accentColor: $("#setting-accent").value, defaultDetailRefreshSeconds: Number($("#setting-detail-refresh").value), monitoringIntervalSeconds: Number($("#setting-monitor-interval").value), trustedCommunityDomains }) }); text($("#settings-message"), response.ok ? "Gespeichert." : await message(response)); if (response.ok) await loadPublic(); });
 $("#smtp-form").addEventListener("submit", async (event) => { event.preventDefault(); const webhookUrls = $("#webhook-urls").value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean); const clearWebhooks = $("#clear-webhooks").checked; const response = await api("admin/settings", { method: "POST", body: JSON.stringify({ smtp: { host: $("#smtp-host").value, port: Number($("#smtp-port").value), username: $("#smtp-user").value, password: $("#smtp-password").value, from: $("#smtp-from").value, to: $("#smtp-to").value }, notifications: { notifyOffline: $("#notify-offline").checked, notifyRecovered: $("#notify-recovered").checked, latencyThresholdMs: Number($("#alert-latency").value), outageMinutes: Number($("#alert-outage").value) }, ...(webhookUrls.length || clearWebhooks ? { webhookUrls: clearWebhooks ? [] : webhookUrls } : {}) }) }); text($("#smtp-message"), response.ok ? "Benachrichtigungseinstellungen gespeichert." : await message(response)); if (response.ok) await loadAdmin(); });
 $("#smtp-test").addEventListener("click", async () => { const response = await api("admin/notifications/test", { method: "POST", body: "{}" }); text($("#smtp-message"), response.ok ? "Testbenachrichtigung wurde gesendet." : await message(response)); });
 async function download(path, filename) {

@@ -1,4 +1,4 @@
-# AMP Community Dashboard v2.3.1
+# AMP Community Dashboard v2.4.0
 
 Eine öffentliche Übersicht für AMP-Community-Seiten. Die AMP-Seite bleibt die vollständige Detailansicht; das Dashboard bündelt Status, Hinweise, Health-Werte und bewusst freigegebene Verbindungslinks.
 
@@ -9,13 +9,15 @@ Eine öffentliche Übersicht für AMP-Community-Seiten. Die AMP-Seite bleibt die
 - Gesundheitswert, Uptime und Latenzdiagramm pro Server. Statuswechsel und Messwerte werden getrennt und platzsparend gespeichert.
 - Eigene Community-URL, Spielserver-Verbindung und optionale Monitoring-Adresse je Server.
 - Adapter für TCP, Steam/Source, Minecraft Java und TeamSpeak; bei `Automatisch` werden passende sichere Abfragen ausprobiert.
+- Die Erkennung liest sichere, öffentliche AMP-Community-Seiten aus: Verbindungslinks, sichtbare Host-Port-Angaben, Datenfelder und eingebettete JSON-Seitendaten. Der erkannte Spielport wird zugleich als Monitoring-Ziel übernommen.
+- Ein erfolgreicher TCP-Handshake wird als **Erreichbar** angezeigt. Damit bleibt ein Server mit messbarer Latenz nicht fälschlich „Unbekannt“, auch wenn kein spieleigenes Statusprotokoll verfügbar ist.
 - Detailansicht der AMP-Community-Seite in einem erst nach Klick geladenen Iframe.
 - Servergruppen mit Besucherfilter, Kategorien und Sortierung.
 - Sichere Banner-Uploads (PNG, JPEG, WebP bis 2 MB), helles/dunkles Design und installierbare PWA für Mobilgeräte.
 - SMTP mit STARTTLS, bis zu fünf sichere HTTPS-Webhooks (z. B. Discord), Meldungen bei Statuswechseln, hoher Latenz und längerem Ausfall.
 - Bereits vorhandene Konten, Server und Daten bleiben beim Update erhalten.
 
-## Einfache Bedienung in v2.3
+## Einfache Bedienung in v2.4
 
 - Die Verwaltung startet im einfachen Modus: sichtbar sind nur Dashboard, Server, Benachrichtigungen und Einstellungen.
 - Einen Server legst du mit Name, AMP-Community-Adresse, „Server erkennen“ und „Speichern“ an. Spielserver-, Monitoring- und Protokollangaben sind unter „Erweiterte Einstellungen“ verborgen.
@@ -24,6 +26,7 @@ Eine öffentliche Übersicht für AMP-Community-Seiten. Die AMP-Seite bleibt die
 - Rollen heißen Administrator, Moderator, Support, Nur ansehen oder Benutzerdefiniert. Jede Berechtigung wird weiterhin auf dem Server geprüft.
 - Beim ersten leeren Dashboard erscheint ein überspringbarer Schnellstart-Assistent.
 - Die Umschaltung „Einfach“/„Erweitert“ ist in der öffentlichen Kopfzeile und kann von jedem Besucher individuell verwendet werden.
+- Im erweiterten Bereich „Einstellungen → Allgemein“ können Administratoren vertrauenswürdige Community-Domains pflegen. Diese Whitelist beschränkt ausschließlich die automatische Erkennung und lockert niemals die Netzwerkprüfung.
 
 ## Voraussetzungen
 
@@ -49,7 +52,7 @@ Es werden keine zusätzlichen npm-Pakete benötigt.
 
    ```bash
    sudo mkdir -p /opt/amp-community-dashboard
-   sudo unzip /opt/amp-community-dashboard-v2.3.1-simple-ui-public-toggle.zip -d /opt/amp-community-dashboard
+   sudo unzip /opt/amp-community-dashboard-v2.4.0-community-discovery.zip -d /opt/amp-community-dashboard
    sudo useradd --system --home /opt/amp-community-dashboard --shell /usr/sbin/nologin amp 2>/dev/null || true
    sudo chown -R amp:amp /opt/amp-community-dashboard
    ```
@@ -79,20 +82,20 @@ Es werden keine zusätzlichen npm-Pakete benötigt.
 
 Die Übersicht ist dann beispielsweise unter `https://amp.example.com/uebersicht/` verfügbar.
 
-## Update auf v2.3.1
+## Update auf v2.4.0
 
 1. Dienst stoppen und den vollständigen bisherigen Ordner sichern:
 
    ```bash
    sudo systemctl stop amp-community-dashboard
-   sudo cp -a /opt/amp-community-dashboard /opt/amp-community-dashboard-before-v2.3.1
+   sudo cp -a /opt/amp-community-dashboard /opt/amp-community-dashboard-before-v2.4.0
    ```
 
 2. Das Paket in einen temporären Ordner entpacken. Anschließend alle Dateien **außer** `data/` in den bestehenden Projektordner kopieren. `data/` weder löschen noch überschreiben.
 
    ```bash
    sudo mkdir -p /opt/amp-dashboard-update
-   sudo unzip -o /opt/amp-community-dashboard-v2.3.1-simple-ui-public-toggle.zip -d /opt/amp-dashboard-update
+   sudo unzip -o /opt/amp-community-dashboard-v2.4.0-community-discovery.zip -d /opt/amp-dashboard-update
    sudo rsync -a --exclude=data/ /opt/amp-dashboard-update/ /opt/amp-community-dashboard/
    sudo chown -R amp:amp /opt/amp-community-dashboard
    ```
@@ -131,6 +134,7 @@ Das Werkzeug erstellt vorab ein Backup der V1-Dateien, validiert danach die übe
 - Die Anwendung lauscht standardmäßig nur auf `127.0.0.1:3100`. Öffentlicher Zugriff erfolgt ausschließlich per HTTPS über Nginx.
 - Private Spielserverziele sind standardmäßig blockiert. Für eine bewusst interne Installation kann in der Dienstdatei `Environment=ALLOW_PRIVATE_NETWORKS=true` gesetzt werden. Das nur in einem vertrauenswürdigen Netz verwenden.
 - StartTLS-SMTP-Ports sind standardmäßig `25`, `587` und `2525`; Community-Seiten `443` und `8443`.
+- Im erweiterten Adminbereich kann eine Domain-Whitelist für Community-Seiten festgelegt werden. Trage nur Domainnamen ein, je Zeile, etwa `amp.example.com` – keine URLs oder IP-Adressen.
 - `GET /health` zeigt den Prozesszustand. `GET /ready` zeigt zusätzlich, ob Datenbank und Monitoring bereit sind.
 - `data/`, insbesondere `data/secrets/`, `data/uploads/` und `data/backups/`, liegt außerhalb des Webroots und darf nie direkt durch Nginx ausgeliefert werden.
 - Die PWA kann über die Browserfunktion „App installieren“ auf Mobilgeräten abgelegt werden. Sie ist eine installierbare Web-App, keine native Store-App.

@@ -26,6 +26,31 @@ test("übernimmt eine sichtbare Spieladresse nur im passenden Kontext", () => {
   assert.equal(result.connection.profile, "auto");
 });
 
+test("findet Port und Adresse auch in AMP-Datenfeldern ohne sichtbaren Connect-Text", () => {
+  const result = extractCommunityData('<h1>Voice</h1><div data-host="voice.example.net" data-port="9987" data-service="TeamSpeak"></div>', "https://amp.example.com/c/demo");
+  assert.equal(result.found, true);
+  assert.equal(result.connection.host, "voice.example.net");
+  assert.equal(result.connection.port, 9987);
+  assert.equal(result.connection.profile, "teamspeak");
+  assert.equal(result.application, "TeamSpeak");
+});
+
+test("findet Spieladressen in eingebetteten Community-Seitendaten", () => {
+  const result = extractCommunityData('<script type="application/json">{"serverAddress":"mc.example.net","gamePort":25565,"type":"minecraft"}</script>', "https://amp.example.com/c/demo");
+  assert.equal(result.found, true);
+  assert.equal(result.connection.host, "mc.example.net");
+  assert.equal(result.connection.port, 25565);
+  assert.equal(result.connection.profile, "minecraft");
+});
+
+test("nimmt eine sichtbare Host-Port-Angabe als Fallback auf", () => {
+  const result = extractCommunityData("<p>backend.example.net:2303</p>", "https://amp.example.com/c/demo");
+  assert.equal(result.found, true);
+  assert.equal(result.connection.host, "backend.example.net");
+  assert.equal(result.connection.port, 2303);
+  assert.equal(result.confidence, "low");
+});
+
 test("ignoriert unsichere oder unpassende Links", () => {
   assert.equal(endpointFromConnectLink("javascript:alert(1)"), null);
   assert.equal(extractCommunityData('<a href="https://example.com">Webseite</a>', "https://amp.example.com/c/demo").found, false);
