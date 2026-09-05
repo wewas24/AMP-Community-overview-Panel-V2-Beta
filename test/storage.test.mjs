@@ -77,7 +77,8 @@ test("drosselt Anmeldungen und invalidiert ersetzte oder abgelaufene Sitzungen",
 
     const ipHash = tokenHash("client-a");
     const usernameHash = tokenHash("admin");
-    store.recordLoginFailure(ipHash, usernameHash);
+    for (let attempt = 0; attempt < 100; attempt += 1) store.recordLoginFailure(ipHash, usernameHash);
+    assert.equal(store.db.prepare("SELECT failures FROM login_rate_limits WHERE scope = 'ip' AND subject_hash = ?").get(ipHash).failures, 20);
     assert.ok(store.loginRetryAfter(ipHash, tokenHash("anderer-name")) > 0);
     assert.ok(store.loginRetryAfter(tokenHash("anderer-client"), usernameHash) > 0);
     store.clearLoginFailures(ipHash, usernameHash);

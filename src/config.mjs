@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 
 const requestedHost = process.env.HOST || "127.0.0.1";
 const loopbackHosts = new Set(["127.0.0.1", "::1", "localhost"]);
+const dataDirectory = resolve(process.env.DATA_DIRECTORY || "data");
 
 export const config = {
   // A public Node listener bypasses the HTTPS proxy and its protection. It is
@@ -11,13 +12,13 @@ export const config = {
   cookieSecure: process.env.COOKIE_SECURE !== "false",
   allowPrivateNetworks: process.env.ALLOW_PRIVATE_NETWORKS === "true",
   publicDirectory: resolve("public"),
-  dataDirectory: resolve("data"),
-  databaseFile: resolve("data", "dashboard-v2.sqlite"),
-  backupDirectory: resolve("data", "backups"),
-  secretsDirectory: resolve("data", "secrets"),
-  smtpSecretFile: resolve("data", "secrets", "smtp-password"),
-  webhookSecretFile: resolve("data", "secrets", "webhook-urls.json"),
-  uploadsDirectory: resolve("data", "uploads"),
+  dataDirectory,
+  databaseFile: resolve(dataDirectory, "dashboard-v2.sqlite"),
+  backupDirectory: resolve(dataDirectory, "backups"),
+  secretsDirectory: resolve(dataDirectory, "secrets"),
+  smtpSecretFile: resolve(dataDirectory, "secrets", "smtp-password"),
+  webhookSecretFile: resolve(dataDirectory, "secrets", "webhook-urls.json"),
+  uploadsDirectory: resolve(dataDirectory, "uploads"),
   sessionIdleMs: 30 * 60 * 1000,
   sessionMaximumMs: 12 * 60 * 60 * 1000,
   statusIntervalMs: 30_000,

@@ -59,7 +59,11 @@ export function httpsUrl(value, label, optional = true) {
   if (!raw && optional) return "";
   try {
     const url = new URL(raw);
-    if (url.protocol !== "https:" || !url.hostname || url.username || url.password || (isIP(url.hostname) && isPrivateAddress(url.hostname))) throw new Error();
+    const hostname = url.hostname.replace(/^\[|\]$/g, "");
+    if (url.protocol !== "https:" || !hostname || url.username || url.password || (isIP(hostname) && isPrivateAddress(hostname))) throw new Error();
+    // A trailing DNS dot is technically valid but creates unnecessary
+    // allow-list ambiguity. Store one canonical hostname instead.
+    if (url.hostname.endsWith(".")) url.hostname = url.hostname.slice(0, -1);
     return url.toString();
   } catch {
     throw new Error(`${label} muss eine öffentliche HTTPS-Adresse ohne Zugangsdaten sein.`);

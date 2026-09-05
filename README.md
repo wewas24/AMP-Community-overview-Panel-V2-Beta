@@ -1,4 +1,4 @@
-# AMP Community Dashboard v2.4.3
+# AMP Community Dashboard v2.4.4
 
 Eine öffentliche Übersicht für AMP-Community-Seiten. Die AMP-Seite bleibt die vollständige Detailansicht; das Dashboard bündelt Status, Hinweise, Health-Werte und bewusst freigegebene Verbindungslinks.
 
@@ -46,7 +46,7 @@ Es werden keine zusätzlichen npm-Pakete benötigt.
 - Das SMTP-Passwort und Webhook-Adressen liegen nur in `data/secrets/`, nicht in SQLite, Exporten oder neuen Backups.
 - Sitzungen verwenden CSRF-Tokens, sichere `__Host-`-Cookies unter HTTPS und eine persistente Anmeldedrosselung.
 - Statusdaten werden als „veraltet“ markiert, sobald keine frische Überwachung mehr vorliegt.
-- Der Testlauf prüft SSRF- und DNS-Rebinding-Schutz, Redirects und Port-Policy, Login-Drosselung, Sitzungswechsel/-ablauf, CSRF, Rechtezuordnung sowie Upload-Signaturen, Größenlimit und Path-Traversal.
+- Der Testlauf prüft SSRF- und DNS-Rebinding-Schutz, Redirects und Port-Policy, ungewöhnliche IP-/IPv6-Darstellungen, Webhooks, Login-Drosselung, Sitzungswechsel/-ablauf, CSRF, Rechtezuordnung sowie Upload-Signaturen, Größenlimit und Path-Traversal. Ein isolierter HTTP-End-to-End-Test prüft diese Regeln zusätzlich gegen einen laufenden Testserver.
 
 ## Neue Installation
 
@@ -54,7 +54,7 @@ Es werden keine zusätzlichen npm-Pakete benötigt.
 
    ```bash
    sudo mkdir -p /opt/amp-community-dashboard
-   sudo unzip /opt/amp-community-dashboard-v2.4.3-security-test-suite.zip -d /opt/amp-community-dashboard
+   sudo unzip /opt/amp-community-dashboard-v2.4.4-security-e2e.zip -d /opt/amp-community-dashboard
    sudo useradd --system --home /opt/amp-community-dashboard --shell /usr/sbin/nologin amp 2>/dev/null || true
    sudo chown -R amp:amp /opt/amp-community-dashboard
    ```
@@ -84,20 +84,20 @@ Es werden keine zusätzlichen npm-Pakete benötigt.
 
 Die Übersicht ist dann beispielsweise unter `https://amp.example.com/uebersicht/` verfügbar.
 
-## Update auf v2.4.3
+## Update auf v2.4.4
 
 1. Dienst stoppen und den vollständigen bisherigen Ordner sichern:
 
    ```bash
    sudo systemctl stop amp-community-dashboard
-   sudo cp -a /opt/amp-community-dashboard /opt/amp-community-dashboard-before-v2.4.3
+   sudo cp -a /opt/amp-community-dashboard /opt/amp-community-dashboard-before-v2.4.4
    ```
 
 2. Das Paket in einen temporären Ordner entpacken. Anschließend alle Dateien **außer** `data/` in den bestehenden Projektordner kopieren. `data/` weder löschen noch überschreiben.
 
    ```bash
    sudo mkdir -p /opt/amp-dashboard-update
-   sudo unzip -o /opt/amp-community-dashboard-v2.4.3-security-test-suite.zip -d /opt/amp-dashboard-update
+   sudo unzip -o /opt/amp-community-dashboard-v2.4.4-security-e2e.zip -d /opt/amp-dashboard-update
    sudo rsync -a --exclude=data/ /opt/amp-dashboard-update/ /opt/amp-community-dashboard/
    sudo chown -R amp:amp /opt/amp-community-dashboard
    ```

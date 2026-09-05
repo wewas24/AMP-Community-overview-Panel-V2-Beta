@@ -1,8 +1,8 @@
 {
   "name": "amp-community-dashboard-v2",
-  "version": "2.4.3",
+  "version": "2.4.4",
   "private": true,
-  "description": "AMP Community Dashboard v2.4.3 mit automatisierten Sicherheitsregressionstests, Arma-3-Erkennung und gehärtetem Monitoring.",
+  "description": "AMP Community Dashboard v2.4.4 mit HTTP-End-to-End-Sicherheitstests, erweiterten SSRF- und Webhook-Tests sowie gehärtetem Monitoring.",
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
