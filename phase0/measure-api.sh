@@ -9,6 +9,8 @@ trap 'rm -rf "$work_directory"' EXIT
 
 command -v curl >/dev/null 2>&1 || { echo "curl fehlt." >&2; exit 1; }
 curl --silent --show-error --fail "$base_url/health" >/dev/null || { echo "Der Phase-0-Testdienst auf Port $port ist nicht erreichbar." >&2; exit 1; }
+metric_ids="$(curl --silent --show-error --fail "$base_url/api/v1/public/servers" | node --input-type=module -e 'let source = ""; process.stdin.on("data", (part) => { source += part; }); process.stdin.on("end", () => { console.log(JSON.parse(source).servers.slice(0, 6).map((server) => server.id).join(" ")); });')"
+[[ -n "$metric_ids" ]] || { echo "Es konnten keine sichtbaren Testserver für Diagrammdaten bestimmt werden." >&2; exit 1; }
 
 measure_endpoint() {
   local endpoint="$1"
@@ -36,7 +38,12 @@ measure_parallel_initial_load() {
     (
       curl --silent --show-error --output /dev/null --write-out '%{http_code} %{time_total} %{size_download}\n' "$base_url/api/v1/public/servers"
       if [[ "$mode" == "advanced" ]]; then
-        curl --silent --show-error --output /dev/null --write-out '%{http_code} %{time_total} %{size_download}\n' "$base_url/api/v1/public/metrics"
+        # The browser fetches history only for cards near the viewport. Six
+        # cards cover a two-column first screen plus the preloading margin.
+        for server_id in $metric_ids; do
+          curl --silent --show-error --output /dev/null --write-out '%{http_code} %{time_total} %{size_download}\n' "$base_url/api/v1/public/metrics?serverId=$server_id" &
+        done
+        wait
       fi
     ) >> "$output" &
   done
@@ -61,7 +68,7 @@ measure_endpoint "/health"
 measure_endpoint "/api/v1/public/servers"
 measure_endpoint "/api/v1/public/metrics"
 echo
-echo "Gleichzeitige anfängliche Ladevorgänge (einfach = nur Übersicht; erweitert = Übersicht + Diagrammdaten):"
+echo "Gleichzeitige anfängliche Ladevorgänge (einfach = nur Übersicht; erweitert = Übersicht + sichtbare Diagrammdaten):"
 measure_parallel_initial_load 1 simple
 measure_parallel_initial_load 10 simple
 measure_parallel_initial_load 50 simple

@@ -11,6 +11,8 @@ let detailTimer = null;
 let draggedId = null;
 let liveEvents = null;
 let advancedMode = localStorage.getItem("amp_v2_ui_mode") === "advanced";
+let metricObserver = null;
+const metricRequests = new Set();
 
 async function api(path, options = {}) {
   const method = String(options.method || "GET").toUpperCase();
@@ -141,6 +143,7 @@ function serverCard(server) {
 function renderServers() {
   const grid = $("#server-grid"); const servers = visibleServers(); grid.replaceChildren(); text($("#filter-summary"), `${servers.length} von ${dashboard.servers.length} Servern angezeigt`);
   if (!servers.length) grid.append(el("p", "empty", dashboard.servers.length ? "Für diesen Filter gibt es keine Server." : "Noch keine öffentlichen Server vorhanden.")); else servers.forEach((server) => grid.append(serverCard(server)));
+  observeVisibleCharts();
 }
 
 function needsFullStatusRender() {
@@ -149,7 +152,7 @@ function needsFullStatusRender() {
 function replaceServerCard(server) {
   if (needsFullStatusRender()) return renderServers();
   const card = [...$("#server-grid").children].find((item) => item.dataset.serverId === server.id);
-  if (card) card.replaceWith(serverCard(server));
+  if (card) { card.replaceWith(serverCard(server)); observeVisibleCharts(); }
 }
 function applyDashboard(value) {
   dashboard = { ...dashboard, ...value, metrics: dashboard.metrics || {} };
@@ -172,9 +175,30 @@ function metricChart(points) {
   const path = values.map((value, index) => `${index ? "L" : "M"}${Math.round(index / (values.length - 1) * width)} ${Math.round(height - value / maximum * (height - 4))}`).join(" ");
   const wrap = el("div", "metric-chart"); wrap.append(el("span", "", "Latenzverlauf (24 h)")); const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); svg.setAttribute("viewBox", `0 0 ${width} ${height}`); svg.setAttribute("role", "img"); svg.setAttribute("aria-label", "Latenzverlauf der letzten 24 Stunden"); const line = document.createElementNS("http://www.w3.org/2000/svg", "path"); line.setAttribute("d", path); svg.append(line); wrap.append(svg); return wrap;
 }
-function applyMetricsDelta(value) {
-  if (!value?.serverId || !Array.isArray(value.metrics)) return;
-  dashboard.metrics = { ...dashboard.metrics, [value.serverId]: value.metrics };
+function metricLoaded(serverId) { return Object.hasOwn(dashboard.metrics, serverId); }
+function requestMetrics(serverId) {
+  if (!serverId || metricLoaded(serverId) || metricRequests.has(serverId)) return;
+  metricRequests.add(serverId);
+  loadMetrics(serverId).catch(() => {}).finally(() => metricRequests.delete(serverId));
+}
+function observeVisibleCharts() {
+  metricObserver?.disconnect(); metricObserver = null;
+  if (!isAdvanced()) return;
+  const cards = [...$("#server-grid").querySelectorAll(".server-card")].filter((card) => {
+    const server = dashboard.servers.find((item) => item.id === card.dataset.serverId);
+    return Boolean(server && hasLiveReachability(server.status) && !metricLoaded(server.id));
+  });
+  if (!cards.length) return;
+  if (!("IntersectionObserver" in window)) { cards.slice(0, 6).forEach((card) => requestMetrics(card.dataset.serverId)); return; }
+  metricObserver = new IntersectionObserver((entries) => {
+    entries.filter((entry) => entry.isIntersecting).forEach((entry) => { metricObserver.unobserve(entry.target); requestMetrics(entry.target.dataset.serverId); });
+  }, { rootMargin: "240px 0px" });
+  cards.forEach((card) => metricObserver.observe(card));
+}
+function applyMetricPoint(value) {
+  if (!value?.serverId || !value.point || !metricLoaded(value.serverId)) return;
+  const previous = dashboard.metrics[value.serverId] || [];
+  dashboard.metrics = { ...dashboard.metrics, [value.serverId]: [...previous, value.point].slice(-300) };
   const server = dashboard.servers.find((item) => item.id === value.serverId);
   if (server && isAdvanced()) replaceServerCard(server);
 }
@@ -189,7 +213,7 @@ async function loadMetrics(serverId = "") {
   } else renderServers();
 }
 async function loadPublic() {
-  const response = await api("public/servers"); if (!response.ok) throw new Error(await message(response)); applyDashboard(await response.json()); if (isAdvanced()) await loadMetrics();
+  const response = await api("public/servers"); if (!response.ok) throw new Error(await message(response)); applyDashboard(await response.json());
 }
 
 function clearDetailTimer() { if (detailTimer) window.clearInterval(detailTimer); detailTimer = null; }
@@ -205,7 +229,7 @@ function openDetails(server) {
   updateDetailSummary(server);
   $("#iframe-shell").replaceChildren(); const frame = document.createElement("iframe"); frame.title = `${server.name} – AMP Community-Seite`; frame.loading = "lazy"; frame.allow = "fullscreen"; frame.referrerPolicy = "strict-origin-when-cross-origin"; frame.src = server.communityUrl; $("#iframe-shell").append(frame);
   const stored = localStorage.getItem("amp_v2_detail_refresh"); const seconds = stored === null ? Number(dashboard.settings.defaultDetailRefreshSeconds || 0) : Number(stored); $("#detail-refresh").value = String(seconds); setDetailRefresh(seconds); $("#details-dialog").showModal();
-  if (isAdvanced()) loadMetrics(server.id).catch(() => {});
+  if (isAdvanced()) requestMetrics(server.id);
 }
 function closeDetails() { clearDetailTimer(); activeDetails = null; $("#iframe-shell").replaceChildren(el("p", "", "Die AMP-Seite wird erst bei Bedarf geladen.")); $("#details-dialog").close(); }
 
@@ -468,7 +492,6 @@ $("#search").addEventListener("input", renderServers); ["#category-filter", "#gr
 function applyTheme(value) { document.documentElement.dataset.theme = value; localStorage.setItem("amp_v2_theme", value); $("#theme-toggle").textContent = value === "light" ? "Dunkel" : "Hell"; }
 function setUiMode(value) {
   advancedMode = Boolean(value); localStorage.setItem("amp_v2_ui_mode", advancedMode ? "advanced" : "simple"); document.body.classList.toggle("advanced-mode", advancedMode); $("#ui-mode-toggle").textContent = advancedMode ? "Einfach" : "Erweitert"; updateCustomPermissionUi(); renderServers();
-  if (advancedMode && dashboard.servers.length) loadMetrics().catch(() => {});
 }
 $("#theme-toggle").addEventListener("click", () => applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light"));
 $("#ui-mode-toggle").addEventListener("click", () => setUiMode(!advancedMode));
@@ -519,9 +542,9 @@ $("#setup-notifications").addEventListener("click", () => { closeSetup(); if ($(
 function startLiveUpdates() {
   if (liveEvents) liveEvents.close();
   liveEvents = new EventSource("api/v1/public/events");
-  liveEvents.addEventListener("dashboard", (event) => { try { applyDashboard(JSON.parse(event.data)); if (isAdvanced()) loadMetrics().catch(() => {}); } catch { /* retry is automatic */ } });
+  liveEvents.addEventListener("dashboard", (event) => { try { applyDashboard(JSON.parse(event.data)); } catch { /* retry is automatic */ } });
   liveEvents.addEventListener("server-status", (event) => { try { applyStatusDelta(JSON.parse(event.data)); } catch { /* retry is automatic */ } });
-  liveEvents.addEventListener("server-metrics", (event) => { try { applyMetricsDelta(JSON.parse(event.data)); } catch { /* retry is automatic */ } });
+  liveEvents.addEventListener("server-metric", (event) => { try { applyMetricPoint(JSON.parse(event.data)); } catch { /* retry is automatic */ } });
   liveEvents.addEventListener("settings-updated", (event) => { try { const value = JSON.parse(event.data); dashboard.settings = value.settings || dashboard.settings; dashboard.version = value.version || dashboard.version; applyBranding(dashboard.settings); } catch { /* retry is automatic */ } });
   liveEvents.addEventListener("resync", () => { loadPublic().catch(() => {}); });
   liveEvents.onerror = () => { text($("#live-label"), "Live-Verbindung wird wiederhergestellt …"); };

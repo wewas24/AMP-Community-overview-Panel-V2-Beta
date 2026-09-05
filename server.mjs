@@ -192,7 +192,7 @@ async function observedStatus(server, status, saved) {
   const delta = statusDelta(server, status, saved);
   if (delta) {
     events.publish("server-status", delta, { key: `server-status:${server.id}` });
-    if (delta.metricsChanged) events.publish("server-metrics", { serverId: server.id, metrics: store.metrics(server.id, 24) }, { key: `server-metrics:${server.id}` });
+    if (delta.metricsChanged) events.publish("server-metric", { serverId: server.id, point: store.latestMetric(server.id) }, { key: `server-metric:${server.id}` });
   }
   const rules = store.getSettings().notifications || {};
   if (Number(rules.latencyThresholdMs) > 0 && ["ONLINE", "REACHABLE"].includes(status.state) && Number(status.latencyMs) >= Number(rules.latencyThresholdMs)) {

@@ -1,4 +1,4 @@
-# P0-Leistungsoptimierung – v2.5.0
+# P0-Leistungsoptimierung – v2.5.1
 
 Dieses Update ist mit bestehenden V2-Daten kompatibel. Der Ordner `data/` wird beim Update nicht ersetzt.
 
@@ -6,11 +6,12 @@ Dieses Update ist mit bestehenden V2-Daten kompatibel. Der Ordner `data/` wird b
 
 - Statusprüfungen senden per SSE nur noch ein kompaktes Delta für den betroffenen Server statt eines vollständigen Dashboards.
 - Der Browser ersetzt bei einer Statusänderung nur die betroffene Karte. Nur bei einer aktiven Status-/Latenz-/Spielersortierung wird die sichtbare Liste neu sortiert.
-- Der einfache Modus lädt keine 24-Stunden-Metriken. Im erweiterten Modus werden sie beim Umschalten, beim Öffnen einer Detailansicht oder bei einem neuen Messwert gezielt geladen.
+- Der einfache Modus lädt keine 24-Stunden-Metriken. Im erweiterten Modus werden sie nur für Karten nahe dem sichtbaren Bereich oder beim Öffnen einer Detailansicht geladen.
 - Uptime-Werte und die öffentliche Dashboard-Übersicht werden kurzzeitig gecacht und bei einer echten Strukturänderung gezielt invalidiert.
 - Der SSE-Hub begrenzt wartende Ereignisse. Bei einem langsamen Browser werden Werte pro Server zusammengefasst; ist der Puffer voll, fordert ein einzelnes `resync` eine saubere Nachsynchronisierung an.
 - Die Versionsnummer kommt aus `package.json`. HTML-Assets, Service Worker, Health-API, Logausgabe und Erkennungskennung verwenden dieselbe Version.
-- Die Phase-0-Messung unterscheidet nun einfachen und erweiterten Erstaufruf und enthält 250-Besucher-Szenarien.
+- Neue Messwerte werden als einzelner Diagrammpunkt übertragen; ein Browser ohne bereits geladenes Diagramm erhält keine unnötige Historie.
+- Die Phase-0-Messung unterscheidet nun einfachen und erweiterten Erstaufruf und enthält 250-Besucher-Szenarien mit sichtbarkeitsbasierten Diagrammdaten.
 
 ## Erwartete Wirkung
 

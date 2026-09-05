@@ -321,6 +321,10 @@ export class Store {
     return this.db.prepare("SELECT latency_ms AS latencyMs,players,max_players AS maxPlayers,checked_at AS checkedAt FROM metrics_history WHERE server_id = ? AND checked_at >= ? ORDER BY checked_at ASC LIMIT 300").all(serverId, new Date(Date.now() - hours * 60 * 60_000).toISOString());
   }
 
+  latestMetric(serverId) {
+    return this.db.prepare("SELECT latency_ms AS latencyMs,players,max_players AS maxPlayers,checked_at AS checkedAt FROM metrics_history WHERE server_id = ? ORDER BY checked_at DESC LIMIT 1").get(serverId) || null;
+  }
+
   cleanup(retention) {
     const activityBefore = new Date(Date.now() - retention.activityMs).toISOString();
     const historyBefore = new Date(Date.now() - retention.historyMs).toISOString();

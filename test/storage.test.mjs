@@ -36,6 +36,7 @@ test("speichert Statusdaten ohne interne Probe-Antwort", async () => {
     assert.equal(repeated.changed, false);
     assert.equal(store.db.prepare("SELECT count(*) AS count FROM status_history WHERE server_id = ?").get("server-1").count, 1);
     assert.equal(store.metrics("server-1", 24).length, 1);
+    assert.equal(store.latestMetric("server-1").latencyMs, 12);
     store.saveStatus("server-1", { state: "REACHABLE", detail: "TCP erreichbar.", checkedAt: new Date(Date.parse(timestamp) + 60_000).toISOString(), latencyMs: 18 });
     assert.equal(store.getStatus("server-1").last_success_at !== null, true);
     assert.equal(store.uptime("server-1", 24) !== null, true);

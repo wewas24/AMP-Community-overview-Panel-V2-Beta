@@ -1,4 +1,4 @@
-AMP Community Dashboard v2.5.0 – Installation für AMP mit Nginx
+AMP Community Dashboard v2.5.1 – Installation für AMP mit Nginx
 
 Diese Anleitung verwendet ausschließlich die Beispiel-Domain amp.example.com.
 
@@ -11,7 +11,7 @@ Voraussetzungen
 1. Dashboard ablegen
 
    sudo mkdir -p /opt/amp-community-dashboard
-   sudo unzip /opt/amp-community-dashboard-v2.5.0-performance.zip -d /opt/amp-community-dashboard
+   sudo unzip /opt/amp-community-dashboard-v2.5.1-performance.zip -d /opt/amp-community-dashboard
    sudo useradd --system --home /opt/amp-community-dashboard --shell /usr/sbin/nologin amp 2>/dev/null || true
    sudo chown -R amp:amp /opt/amp-community-dashboard
 
