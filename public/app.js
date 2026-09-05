@@ -114,7 +114,7 @@ function copyAddressButton(server) {
 }
 
 function serverCard(server) {
-  const card = el("article", "server-card"); card.style.setProperty("--card-accent", server.accentColor || "var(--accent)");
+  const card = el("article", "server-card"); card.dataset.serverId = server.id; card.style.setProperty("--card-accent", server.accentColor || "var(--accent)");
   if (server.bannerUrl) { const banner = document.createElement("img"); banner.className = "server-banner"; banner.src = server.bannerUrl; banner.alt = ""; card.append(banner); }
   const header = el("header", "card-header"); const ident = el("div", "server-ident");
   const icon = server.iconUrl ? document.createElement("img") : el("span", "server-icon", "◆"); icon.className = "server-icon"; if (server.iconUrl) { icon.src = server.iconUrl; icon.alt = ""; }
@@ -143,7 +143,28 @@ function renderServers() {
   if (!servers.length) grid.append(el("p", "empty", dashboard.servers.length ? "Für diesen Filter gibt es keine Server." : "Noch keine öffentlichen Server vorhanden.")); else servers.forEach((server) => grid.append(serverCard(server)));
 }
 
-function applyDashboard(value) { dashboard = { ...dashboard, ...value }; applyBranding(dashboard.settings); updateStats(dashboard.summary); updateCategories(); updateGroups(); renderServers(); }
+function needsFullStatusRender() {
+  return $("#status-filter").value !== "all" || ["players", "latency", "status"].includes($("#sort-filter").value);
+}
+function replaceServerCard(server) {
+  if (needsFullStatusRender()) return renderServers();
+  const card = [...$("#server-grid").children].find((item) => item.dataset.serverId === server.id);
+  if (card) card.replaceWith(serverCard(server));
+}
+function applyDashboard(value) {
+  dashboard = { ...dashboard, ...value, metrics: dashboard.metrics || {} };
+  applyBranding(dashboard.settings); updateStats(dashboard.summary); updateCategories(); updateGroups(); renderServers();
+}
+function applyStatusDelta(value) {
+  const index = dashboard.servers.findIndex((server) => server.id === value.serverId);
+  if (index < 0) return loadPublic().catch(() => {});
+  const server = { ...dashboard.servers[index], status: value.status, uptime: value.uptime || dashboard.servers[index].uptime, healthScore: value.healthScore ?? dashboard.servers[index].healthScore };
+  dashboard.servers[index] = server;
+  if (value.summary) dashboard.summary = value.summary;
+  updateStats(dashboard.summary);
+  if (activeDetails?.id === server.id) { activeDetails = server; updateDetailSummary(server); }
+  replaceServerCard(server);
+}
 function metricChart(points) {
   const values = points.map((point) => Number(point.latencyMs)).filter((value) => Number.isFinite(value) && value >= 0);
   if (values.length < 2) return null;
@@ -151,21 +172,40 @@ function metricChart(points) {
   const path = values.map((value, index) => `${index ? "L" : "M"}${Math.round(index / (values.length - 1) * width)} ${Math.round(height - value / maximum * (height - 4))}`).join(" ");
   const wrap = el("div", "metric-chart"); wrap.append(el("span", "", "Latenzverlauf (24 h)")); const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); svg.setAttribute("viewBox", `0 0 ${width} ${height}`); svg.setAttribute("role", "img"); svg.setAttribute("aria-label", "Latenzverlauf der letzten 24 Stunden"); const line = document.createElementNS("http://www.w3.org/2000/svg", "path"); line.setAttribute("d", path); svg.append(line); wrap.append(svg); return wrap;
 }
-async function loadMetrics() { const response = await api("public/metrics"); if (response.ok) { dashboard.metrics = (await response.json()).metrics || {}; renderServers(); } }
+function applyMetricsDelta(value) {
+  if (!value?.serverId || !Array.isArray(value.metrics)) return;
+  dashboard.metrics = { ...dashboard.metrics, [value.serverId]: value.metrics };
+  const server = dashboard.servers.find((item) => item.id === value.serverId);
+  if (server && isAdvanced()) replaceServerCard(server);
+}
+async function loadMetrics(serverId = "") {
+  const response = await api(`public/metrics${serverId ? `?serverId=${encodeURIComponent(serverId)}` : ""}`);
+  if (!response.ok) return;
+  const metrics = (await response.json()).metrics || {};
+  dashboard.metrics = serverId ? { ...dashboard.metrics, ...metrics } : metrics;
+  if (serverId) {
+    const server = dashboard.servers.find((item) => item.id === serverId);
+    if (server && isAdvanced()) replaceServerCard(server);
+  } else renderServers();
+}
 async function loadPublic() {
-  const response = await api("public/servers"); if (!response.ok) throw new Error(await message(response)); applyDashboard(await response.json()); await loadMetrics();
+  const response = await api("public/servers"); if (!response.ok) throw new Error(await message(response)); applyDashboard(await response.json()); if (isAdvanced()) await loadMetrics();
 }
 
 function clearDetailTimer() { if (detailTimer) window.clearInterval(detailTimer); detailTimer = null; }
 function reloadDetail() { const frame = $("#iframe-shell iframe"); if (frame && activeDetails) frame.src = `${activeDetails.communityUrl}${activeDetails.communityUrl.includes("?") ? "&" : "?"}dashboard_refresh=${Date.now()}`; }
 function setDetailRefresh(seconds) { clearDetailTimer(); localStorage.setItem("amp_v2_detail_refresh", String(seconds)); if (Number(seconds) > 0 && activeDetails) detailTimer = window.setInterval(reloadDetail, Number(seconds) * 1000); }
-function openDetails(server) {
-  activeDetails = server; text($("#details-title"), server.name); $("#open-community").href = server.communityUrl;
+function updateDetailSummary(server) {
   const summary = $("#detail-summary"); summary.replaceChildren(); const state = stateInfo(server.status); summary.append(el("span", `status ${state.className}`, state.label), el("span", "", relativeTime(server.status?.checkedAt)));
   if (hasLiveReachability(server.status) && server.status?.players !== null && server.status?.players !== undefined) summary.append(el("span", "", `${server.status.players}${server.status.maxPlayers ? ` / ${server.status.maxPlayers}` : ""} Spieler`));
   if (isAdvanced()) { summary.append(el("span", "", `Health ${server.healthScore ?? 0} / 100`)); const technical = document.createElement("details"); technical.className = "technical-details"; technical.append(el("summary", "", "Technische Hinweise"), el("p", "", server.status?.detail || "Keine technischen Hinweise vorhanden.")); summary.append(technical); }
+}
+function openDetails(server) {
+  activeDetails = server; text($("#details-title"), server.name); $("#open-community").href = server.communityUrl;
+  updateDetailSummary(server);
   $("#iframe-shell").replaceChildren(); const frame = document.createElement("iframe"); frame.title = `${server.name} – AMP Community-Seite`; frame.loading = "lazy"; frame.allow = "fullscreen"; frame.referrerPolicy = "strict-origin-when-cross-origin"; frame.src = server.communityUrl; $("#iframe-shell").append(frame);
   const stored = localStorage.getItem("amp_v2_detail_refresh"); const seconds = stored === null ? Number(dashboard.settings.defaultDetailRefreshSeconds || 0) : Number(stored); $("#detail-refresh").value = String(seconds); setDetailRefresh(seconds); $("#details-dialog").showModal();
+  if (isAdvanced()) loadMetrics(server.id).catch(() => {});
 }
 function closeDetails() { clearDetailTimer(); activeDetails = null; $("#iframe-shell").replaceChildren(el("p", "", "Die AMP-Seite wird erst bei Bedarf geladen.")); $("#details-dialog").close(); }
 
@@ -426,7 +466,10 @@ function selectFormTab(tab) { $$("[data-form-panel]").forEach((panel) => { panel
 
 $("#search").addEventListener("input", renderServers); ["#category-filter", "#group-filter", "#status-filter", "#sort-filter"].forEach((id) => $(id).addEventListener("change", renderServers)); $("#refresh-statuses").addEventListener("click", () => loadPublic().catch((error) => { text($("#live-label"), error.message); }));
 function applyTheme(value) { document.documentElement.dataset.theme = value; localStorage.setItem("amp_v2_theme", value); $("#theme-toggle").textContent = value === "light" ? "Dunkel" : "Hell"; }
-function setUiMode(value) { advancedMode = Boolean(value); localStorage.setItem("amp_v2_ui_mode", advancedMode ? "advanced" : "simple"); document.body.classList.toggle("advanced-mode", advancedMode); $("#ui-mode-toggle").textContent = advancedMode ? "Einfach" : "Erweitert"; updateCustomPermissionUi(); renderServers(); }
+function setUiMode(value) {
+  advancedMode = Boolean(value); localStorage.setItem("amp_v2_ui_mode", advancedMode ? "advanced" : "simple"); document.body.classList.toggle("advanced-mode", advancedMode); $("#ui-mode-toggle").textContent = advancedMode ? "Einfach" : "Erweitert"; updateCustomPermissionUi(); renderServers();
+  if (advancedMode && dashboard.servers.length) loadMetrics().catch(() => {});
+}
 $("#theme-toggle").addEventListener("click", () => applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light"));
 $("#ui-mode-toggle").addEventListener("click", () => setUiMode(!advancedMode));
 $("#close-details").addEventListener("click", closeDetails); $("#details-dialog").addEventListener("close", () => { if (activeDetails) closeDetails(); }); $("#detail-refresh").addEventListener("change", (event) => setDetailRefresh(event.target.value)); $("#refresh-detail").addEventListener("click", reloadDetail);
@@ -476,10 +519,16 @@ $("#setup-notifications").addEventListener("click", () => { closeSetup(); if ($(
 function startLiveUpdates() {
   if (liveEvents) liveEvents.close();
   liveEvents = new EventSource("api/v1/public/events");
-  liveEvents.addEventListener("dashboard", (event) => { try { applyDashboard(JSON.parse(event.data)); loadMetrics().catch(() => {}); } catch { /* retry is automatic */ } });
+  liveEvents.addEventListener("dashboard", (event) => { try { applyDashboard(JSON.parse(event.data)); if (isAdvanced()) loadMetrics().catch(() => {}); } catch { /* retry is automatic */ } });
+  liveEvents.addEventListener("server-status", (event) => { try { applyStatusDelta(JSON.parse(event.data)); } catch { /* retry is automatic */ } });
+  liveEvents.addEventListener("server-metrics", (event) => { try { applyMetricsDelta(JSON.parse(event.data)); } catch { /* retry is automatic */ } });
+  liveEvents.addEventListener("settings-updated", (event) => { try { const value = JSON.parse(event.data); dashboard.settings = value.settings || dashboard.settings; dashboard.version = value.version || dashboard.version; applyBranding(dashboard.settings); } catch { /* retry is automatic */ } });
+  liveEvents.addEventListener("resync", () => { loadPublic().catch(() => {}); });
   liveEvents.onerror = () => { text($("#live-label"), "Live-Verbindung wird wiederhergestellt …"); };
 }
 applyTheme(localStorage.getItem("amp_v2_theme") || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
 setUiMode(advancedMode);
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
-loadSession().then(async () => { await loadPublic(); startLiveUpdates(); }).catch((error) => { text($("#live-label"), error.message || "Dashboard nicht erreichbar"); });
+function registerWorker() {
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register(`sw.js?v=${encodeURIComponent(dashboard.version || "current")}`).catch(() => {});
+}
+loadSession().then(async () => { await loadPublic(); registerWorker(); startLiveUpdates(); }).catch((error) => { text($("#live-label"), error.message || "Dashboard nicht erreichbar"); });

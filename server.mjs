@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { createReadStream } from "node:fs";
-import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { config, permissionCodes, roles } from "./src/config.mjs";
@@ -15,6 +15,7 @@ import { sendWebhook } from "./src/webhook.mjs";
 import { sameOriginValues, validMutationRequest } from "./src/request-guards.mjs";
 import { permissionFor, hasPermission } from "./src/permissions.mjs";
 import { isUploadFilename, parseUploadedImage } from "./src/uploads.mjs";
+import { APP_VERSION } from "./src/version.mjs";
 
 const contentTypes = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".webmanifest": "application/manifest+json; charset=utf-8" };
 const store = await openStore();
@@ -145,7 +146,7 @@ async function body(request, maximum = 128_000) {
 }
 
 function activityText(entries) {
-  const lines = ["AMP Community Dashboard v2.4.4 – Änderungsprotokoll", `Erstellt: ${new Date().toISOString()}`, "Aufbewahrung: sieben Tage", ""];
+  const lines = [`AMP Community Dashboard v${APP_VERSION} – Änderungsprotokoll`, `Erstellt: ${new Date().toISOString()}`, "Aufbewahrung: sieben Tage", ""];
   for (const entry of entries) lines.push(`${entry.created_at} · ${entry.username} · ${entry.action}${entry.subject ? ` · ${entry.subject}` : ""}${entry.detail ? ` – ${entry.detail}` : ""}`);
   return `${lines.join("\n")}\n`;
 }
@@ -187,8 +188,12 @@ async function sendRuleAlert(server, key, subject, message) {
   if (deliveries.length) store.addActivity("system", "Benachrichtigungsregel ausgelöst", server.name, "ok", `${key}: ${deliveries.join(", ")}`);
 }
 
-async function observedStatus(server, status) {
-  events.publish("dashboard", dashboardPayload());
+async function observedStatus(server, status, saved) {
+  const delta = statusDelta(server, status, saved);
+  if (delta) {
+    events.publish("server-status", delta, { key: `server-status:${server.id}` });
+    if (delta.metricsChanged) events.publish("server-metrics", { serverId: server.id, metrics: store.metrics(server.id, 24) }, { key: `server-metrics:${server.id}` });
+  }
   const rules = store.getSettings().notifications || {};
   if (Number(rules.latencyThresholdMs) > 0 && ["ONLINE", "REACHABLE"].includes(status.state) && Number(status.latencyMs) >= Number(rules.latencyThresholdMs)) {
     await sendRuleAlert(server, "high-latency", `Hohe Latenz: ${server.name}`, `Gemessene Latenz: ${status.latencyMs} ms. Grenzwert: ${rules.latencyThresholdMs} ms.`);
@@ -218,25 +223,96 @@ function healthScore(server, status, uptime) {
   return Math.max(0, Math.min(100, Math.round(availability * 0.6 + latencyScore + stateScore)));
 }
 
-function dashboardPayload() {
+const uptimeCacheTtlMs = 60_000;
+const uptimeCache = new Map();
+const dashboardState = { dirty: true, settings: null, summary: null, order: [], servers: new Map(), freshnessAt: 0 };
+
+function emptySummary() { return { total: 0, online: 0, offline: 0, maintenance: 0, unknown: 0, players: 0 }; }
+
+function contribution(server) {
+  const output = emptySummary();
+  output.total = 1;
+  const state = server.status?.stale ? "UNKNOWN" : server.status?.state || "UNKNOWN";
+  if (["ONLINE", "REACHABLE"].includes(state)) output.online = 1;
+  else if (state === "MAINTENANCE") output.maintenance = 1;
+  else if (["OFFLINE", "CONNECTION_REFUSED", "TIMEOUT"].includes(state)) output.offline = 1;
+  else output.unknown = 1;
+  output.players = Number(server.status?.players || 0);
+  return output;
+}
+
+function changeSummary(summary, part, direction) {
+  for (const key of Object.keys(summary)) summary[key] += Number(part[key] || 0) * direction;
+}
+
+function cachedUptime(serverId) {
+  const cached = uptimeCache.get(serverId);
+  if (cached && Date.now() - cached.createdAt < uptimeCacheTtlMs) return cached.value;
+  const value = { day: store.uptime(serverId, 24), week: store.uptime(serverId, 168), month: store.uptime(serverId, 720) };
+  uptimeCache.set(serverId, { createdAt: Date.now(), value });
+  return value;
+}
+
+function dashboardServer(server, status) {
+  const freshStatus = statusWithFreshness(server, status);
+  const uptime = cachedUptime(server.id);
+  return { ...publicServer(server, freshStatus), uptime, healthScore: healthScore(server, freshStatus, uptime.day) };
+}
+
+function freshnessDeadline(server, status) {
+  const checkedAt = Date.parse(status?.checkedAt || "");
+  if (!Number.isFinite(checkedAt)) return Date.now() + uptimeCacheTtlMs;
+  const interval = Math.max(30, Number(server.monitoring?.intervalSeconds) || 30) * 1_000;
+  return checkedAt + interval * 2 + 1;
+}
+
+function rebuildDashboardState() {
   const servers = store.allServers();
   const statuses = store.allStatuses();
-  const summary = { total: 0, online: 0, offline: 0, maintenance: 0, unknown: 0, players: 0 };
+  const next = { dirty: false, settings: publicSettings(store.getSettings()), summary: emptySummary(), order: [], servers: new Map(), freshnessAt: Number.POSITIVE_INFINITY };
   for (const server of servers) {
     if (server.visibility === "hidden") continue;
-    summary.total += 1;
-    const state = statusWithFreshness(server, statuses.get(server.id)).stale ? "UNKNOWN" : statuses.get(server.id)?.state || "UNKNOWN";
-    if (["ONLINE", "REACHABLE"].includes(state)) summary.online += 1;
-    else if (state === "MAINTENANCE") summary.maintenance += 1;
-    else if (["OFFLINE", "CONNECTION_REFUSED", "TIMEOUT"].includes(state)) summary.offline += 1;
-    else summary.unknown += 1;
-    summary.players += Number(statuses.get(server.id)?.players || 0);
+    const item = dashboardServer(server, statuses.get(server.id));
+    next.order.push(server.id);
+    next.servers.set(server.id, item);
+    changeSummary(next.summary, contribution(item), 1);
+    next.freshnessAt = Math.min(next.freshnessAt, freshnessDeadline(server, item.status));
   }
-  return { summary, servers: servers.filter((server) => server.visibility !== "hidden").map((server) => {
-    const status = statusWithFreshness(server, statuses.get(server.id));
-    const uptime = { day: store.uptime(server.id, 24), week: store.uptime(server.id, 168), month: store.uptime(server.id, 720) };
-    return { ...publicServer(server, status), uptime, healthScore: healthScore(server, status, uptime.day) };
-  }), settings: publicSettings(store.getSettings()) };
+  if (!Number.isFinite(next.freshnessAt)) next.freshnessAt = Date.now() + uptimeCacheTtlMs;
+  Object.assign(dashboardState, next);
+}
+
+function ensureDashboardState() {
+  if (dashboardState.dirty || Date.now() >= dashboardState.freshnessAt) rebuildDashboardState();
+}
+
+function invalidateDashboardState() {
+  dashboardState.dirty = true;
+  dashboardState.freshnessAt = 0;
+}
+
+function dashboardPayload() {
+  ensureDashboardState();
+  return { version: APP_VERSION, summary: { ...dashboardState.summary }, servers: dashboardState.order.map((id) => dashboardState.servers.get(id)), settings: dashboardState.settings };
+}
+
+function statusDelta(server, status, saved) {
+  if (!events.clientCount) { invalidateDashboardState(); return null; }
+  if (saved?.changed) uptimeCache.delete(server.id);
+  ensureDashboardState();
+  const previous = dashboardState.servers.get(server.id);
+  if (!previous) { invalidateDashboardState(); return null; }
+  const next = dashboardServer(server, status);
+  changeSummary(dashboardState.summary, contribution(previous), -1);
+  changeSummary(dashboardState.summary, contribution(next), 1);
+  dashboardState.servers.set(server.id, next);
+  dashboardState.freshnessAt = Math.min(dashboardState.freshnessAt, freshnessDeadline(server, next.status));
+  return { serverId: server.id, status: next.status, uptime: next.uptime, healthScore: next.healthScore, summary: { ...dashboardState.summary }, metricsChanged: Boolean(saved?.metricsAdded) };
+}
+
+function publishDashboard() {
+  invalidateDashboardState();
+  if (events.clientCount) events.publish("dashboard", dashboardPayload(), { key: "dashboard" });
 }
 
 function sameConnection(left, right) {
@@ -251,14 +327,16 @@ async function validateExternalIcon(server) {
 
 async function api(request, response, url) {
   const path = url.pathname;
-  if (request.method === "GET" && path === "/health") return json(response, 200, { ok: true, version: "2.4.4", time: new Date().toISOString() });
+  if (request.method === "GET" && path === "/health") return json(response, 200, { ok: true, version: APP_VERSION, time: new Date().toISOString() });
   if (request.method === "GET" && path === "/ready") return json(response, 200, { ready: Boolean(store.db), monitoring: !monitor.stopped });
   if (request.method === "GET" && path === "/api/v1/public/events") { setHeaders(response); events.subscribe(request, response); return; }
   if (request.method === "GET" && ["/api/v1/public/servers", "/api/servers"].includes(path)) return json(response, 200, dashboardPayload());
   if (request.method === "GET" && path === "/api/v1/public/statuses") return json(response, 200, { statuses: [...store.allStatuses()].map(([id, status]) => ({ id, status })) });
   if (request.method === "GET" && path === "/api/v1/public/metrics") {
     const visible = new Set(store.allServers().filter((server) => server.visibility !== "hidden").map((server) => server.id));
-    return json(response, 200, { metrics: Object.fromEntries([...visible].map((id) => [id, store.metrics(id, 24)])) });
+    const requestedServerId = String(url.searchParams.get("serverId") || "");
+    const ids = requestedServerId && visible.has(requestedServerId) ? [requestedServerId] : requestedServerId ? [] : [...visible];
+    return json(response, 200, { metrics: Object.fromEntries(ids.map((id) => [id, store.metrics(id, 24)])) });
   }
   if (request.method === "GET" && path === "/api/v1/session") {
     const session = sessionFrom(request);
@@ -304,7 +382,7 @@ async function api(request, response, url) {
     if (session.role !== "owner" && (next.connection || next.monitoringTarget)) return error(response, 403, "Nur Vollzugriff darf eine Spielserver- oder Monitoring-Adresse anlegen oder ändern.");
     await validateExternalIcon(next);
     if (existing.some((server) => server.slug === next.slug)) return error(response, 409, "Dieser Server-Slug ist bereits vergeben.");
-    store.saveServer(next); store.addActivity(session.username, "Server erstellt", next.name); events.publish("dashboard", dashboardPayload());
+    store.saveServer(next); store.addActivity(session.username, "Server erstellt", next.name); publishDashboard();
     return json(response, 201, { server: adminServer(next) });
   }
   if (request.method === "POST" && remainder === "servers/discover") {
@@ -320,15 +398,15 @@ async function api(request, response, url) {
     if (session.role !== "owner" && (!sameConnection(old.connection, next.connection) || !sameConnection(old.monitoringTarget, next.monitoringTarget))) return error(response, 403, "Nur Vollzugriff darf eine Spielserver- oder Monitoring-Adresse anlegen oder ändern.");
     await validateExternalIcon(next);
     if (store.allServers().some((server) => server.id !== old.id && server.slug === next.slug)) return error(response, 409, "Dieser Server-Slug ist bereits vergeben.");
-    store.saveServer(next); store.addActivity(session.username, "Server bearbeitet", next.name); events.publish("dashboard", dashboardPayload());
+    store.saveServer(next); store.addActivity(session.username, "Server bearbeitet", next.name); publishDashboard();
     return json(response, 200, { server: adminServer(next) });
   }
   if (serverId && request.method === "DELETE") {
     const removed = store.removeServer(serverId); if (!removed) return error(response, 404, "Server nicht gefunden.");
-    store.addActivity(session.username, "Server gelöscht", removed.name); events.publish("dashboard", dashboardPayload()); return json(response, 200, { ok: true });
+    store.addActivity(session.username, "Server gelöscht", removed.name); publishDashboard(); return json(response, 200, { ok: true });
   }
   if (request.method === "POST" && remainder === "servers/reorder") {
-    const input = await body(request); const servers = store.reorder(Array.isArray(input?.ids) ? input.ids : []); store.addActivity(session.username, "Serverreihenfolge geändert", `${servers.length} Server`); events.publish("dashboard", dashboardPayload()); return json(response, 200, { servers });
+    const input = await body(request); const servers = store.reorder(Array.isArray(input?.ids) ? input.ids : []); store.addActivity(session.username, "Serverreihenfolge geändert", `${servers.length} Server`); publishDashboard(); return json(response, 200, { servers });
   }
   const duplicateId = /^servers\/([^/]+)\/duplicate$/.exec(remainder)?.[1];
   if (duplicateId && request.method === "POST") {
@@ -336,7 +414,7 @@ async function api(request, response, url) {
     const source = store.findServer(duplicateId); if (!source) return error(response, 404, "Server nicht gefunden.");
     if (store.allServers().length >= config.maxServers) return error(response, 400, `Es können maximal ${config.maxServers} Server gespeichert werden.`);
     const copy = { ...source, id: randomUUID(), name: `${source.name} Kopie`, slug: `${source.slug}-kopie-${Date.now().toString().slice(-4)}`, sortOrder: store.allServers().length, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-    store.saveServer(copy); store.addActivity(session.username, "Server dupliziert", source.name); events.publish("dashboard", dashboardPayload()); return json(response, 201, { server: adminServer(copy) });
+    store.saveServer(copy); store.addActivity(session.username, "Server dupliziert", source.name); publishDashboard(); return json(response, 201, { server: adminServer(copy) });
   }
   const testId = /^servers\/([^/]+)\/test$/.exec(remainder)?.[1];
   if (testId && request.method === "POST") {
@@ -368,10 +446,13 @@ async function api(request, response, url) {
       }
       await store.setWebhookUrls(webhookUrls);
     }
-    const saved = store.saveSettings(settings); store.addActivity(session.username, "Seiteneinstellungen geändert"); events.publish("dashboard", dashboardPayload()); return json(response, 200, await adminSettings(saved));
+    const saved = store.saveSettings(settings); store.addActivity(session.username, "Seiteneinstellungen geändert");
+    invalidateDashboardState();
+    if (events.clientCount) events.publish("settings-updated", { version: APP_VERSION, settings: publicSettings(saved) }, { key: "settings" });
+    return json(response, 200, await adminSettings(saved));
   }
   if (request.method === "POST" && remainder === "notifications/test") {
-    const deliveries = await sendNotifications("Test: AMP Community Dashboard v2.4.4", "Dies ist eine Testbenachrichtigung vom AMP Community Dashboard.");
+    const deliveries = await sendNotifications(`Test: AMP Community Dashboard v${APP_VERSION}`, "Dies ist eine Testbenachrichtigung vom AMP Community Dashboard.");
     if (!deliveries.length) return error(response, 400, "Es ist kein funktionierender SMTP- oder Webhook-Kanal eingerichtet.");
     store.addActivity(session.username, "Benachrichtigungstest gesendet", "", "ok", deliveries.join(", ")); return json(response, 200, { ok: true });
   }
@@ -404,7 +485,7 @@ async function api(request, response, url) {
     const before = await store.snapshotBeforeImport(); const oldById = new Map(store.allServers().map((server) => [server.id, server])); const slugs = new Set();
     const imported = [];
     for (const [index, item] of input.servers.entries()) { const next = normalizeServer(item, { id: item.id || randomUUID(), createdAt: oldById.get(item.id)?.createdAt }, index, config.allowPrivateNetworks); let slug = next.slug; let number = 2; while (slugs.has(slug)) slug = `${next.slug}-${number++}`; slugs.add(slug); imported.push({ ...next, slug }); }
-    store.replaceServers(imported); store.addActivity(session.username, "Sicherung importiert", `${imported.length} Server`, "ok", `Automatische Sicherung: ${before}`); events.publish("dashboard", dashboardPayload());
+    store.replaceServers(imported); store.addActivity(session.username, "Sicherung importiert", `${imported.length} Server`, "ok", `Automatische Sicherung: ${before}`); publishDashboard();
     // Imported targets are not contacted immediately. The regular, bounded
     // monitoring schedule picks them up, avoiding a bulk network burst.
     return json(response, 200, { servers: imported.length, automaticBackup: before });
@@ -422,7 +503,9 @@ async function staticFile(request, response, url) {
     const fileInfo = await stat(actualFile); if (!fileInfo.isFile()) throw new Error();
     setHeaders(response, requested === "/index.html" ? frameSources() : "'none'");
     response.writeHead(200, { "Content-Type": contentTypes[extname(file)] || "application/octet-stream", "Cache-Control": "no-cache" });
-    if (request.method === "HEAD") return response.end(); createReadStream(actualFile).pipe(response);
+    if (request.method === "HEAD") return response.end();
+    if (requested === "/index.html") return response.end((await readFile(actualFile, "utf8")).replaceAll("__APP_VERSION__", encodeURIComponent(APP_VERSION)));
+    createReadStream(actualFile).pipe(response);
   } catch { error(response, 404, "Nicht gefunden."); }
 }
 
@@ -467,7 +550,7 @@ scheduleMonitoring();
 server.listen(config.port, config.host, () => {
   const address = server.address();
   const port = typeof address === "object" && address ? address.port : config.port;
-  console.log(`AMP Community Dashboard v2.4.4 läuft auf http://${config.host}:${port}`);
+  console.log(`AMP Community Dashboard v${APP_VERSION} läuft auf http://${config.host}:${port}`);
 });
 
 let shuttingDown = false;

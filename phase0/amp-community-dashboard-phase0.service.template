@@ -1,26 +1,27 @@
 [Unit]
-Description=AMP Community Dashboard
+Description=AMP Community Dashboard – Phase-0-Test
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=amp
-WorkingDirectory=/opt/amp-community-dashboard
+WorkingDirectory=__STAGE_DIRECTORY__
 Environment=HOST=127.0.0.1
-Environment=PORT=3100
-Environment=COOKIE_SECURE=true
+Environment=PORT=__PORT__
+Environment=COOKIE_SECURE=false
 Environment=ALLOW_PRIVATE_NETWORKS=false
+Environment=DATA_DIRECTORY=__STAGE_DIRECTORY__/data
 ExecStart=/usr/bin/node server.mjs
-Restart=always
-RestartSec=5
+Restart=on-failure
+RestartSec=2
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/opt/amp-community-dashboard/data
+ReadWritePaths=__STAGE_DIRECTORY__/data
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

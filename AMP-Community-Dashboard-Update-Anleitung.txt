@@ -1,18 +1,18 @@
-AMP Community Dashboard v2.4.4 – Update-Anleitung
+AMP Community Dashboard v2.5.0 – Update-Anleitung
 
 Diese Anleitung verwendet ausschließlich Beispielwerte und bewahrt alle vorhandenen Daten.
 
 1. Dienst stoppen und Sicherung erstellen
 
    sudo systemctl stop amp-community-dashboard
-   sudo cp -a /opt/amp-community-dashboard /opt/amp-community-dashboard-before-v2.4.4
+   sudo cp -a /opt/amp-community-dashboard /opt/amp-community-dashboard-before-v2.5.0
 
 2. Update sicher einspielen
 
 Das Paket nicht direkt über den Projektordner entpacken. In einen temporären Ordner entpacken und danach alle Dateien außer data/ übernehmen:
 
    sudo mkdir -p /opt/amp-dashboard-update
-   sudo unzip -o /opt/amp-community-dashboard-v2.4.4-security-e2e.zip -d /opt/amp-dashboard-update
+   sudo unzip -o /opt/amp-community-dashboard-v2.5.0-performance.zip -d /opt/amp-dashboard-update
    sudo rsync -a --exclude=data/ /opt/amp-dashboard-update/ /opt/amp-community-dashboard/
    sudo chown -R amp:amp /opt/amp-community-dashboard
 
@@ -42,7 +42,8 @@ Danach:
 - Unter Überwachung eine Testbenachrichtigung senden.
 - Prüfen, dass oben die Live-Verbindung keinen Wiederherstellungshinweis zeigt.
 - In „Einstellungen → Allgemein → Erweiterte Einstellungen“ optional vertrauenswürdige Community-Domains eintragen. Das sind nur Domainnamen, je Zeile, ohne https:// und ohne Pfad.
-- Beim Hinzufügen eines Servers „Server erkennen“ wählen. V2.4.4 übernimmt Spieladresse, Port und – wenn eindeutig – die passende Abfrageart aus der Community-Seite. Bei Arma 3 wird der Query-Port für die Steam-Statusabfrage getrennt gesetzt.
+- Beim Hinzufügen eines Servers „Server erkennen“ wählen. V2.5.0 übernimmt Spieladresse, Port und – wenn eindeutig – die passende Abfrageart aus der Community-Seite. Bei Arma 3 wird der Query-Port für die Steam-Statusabfrage getrennt gesetzt.
+- Statuswechsel aktualisieren nur die betroffene Karte. Im erweiterten Modus werden Latenzwerte je Server einzeln nachgeladen; der einfache Modus lädt keine Diagrammdaten.
 
 V1-Migration
 

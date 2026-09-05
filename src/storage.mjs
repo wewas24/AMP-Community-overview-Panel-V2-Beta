@@ -295,7 +295,7 @@ export class Store {
     });
     if (addHistory) this.db.prepare("INSERT INTO status_history(server_id,state,latency_ms,players,max_players,checked_at) VALUES(?,?,?,?,?,?)").run(serverId, status.state, latencyMs, status.players ?? null, status.maxPlayers ?? null, timestamp);
     if (addMetrics) this.db.prepare("INSERT INTO metrics_history(server_id,latency_ms,players,max_players,checked_at) VALUES(?,?,?,?,?)").run(serverId, latencyMs, status.players ?? null, status.maxPlayers ?? null, timestamp);
-    return { changed, previous: previous ? this.statusRow(previous) : null, current: this.statusRow(this.getStatus(serverId)) };
+    return { changed, metricsAdded: addMetrics, previous: previous ? this.statusRow(previous) : null, current: this.statusRow(this.getStatus(serverId)) };
   }
 
   uptime(serverId, hours) {

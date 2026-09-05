@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import { resolveSafeTarget } from "./security.mjs";
 import { config } from "./config.mjs";
 import { cleanText, httpsUrl, validHost } from "./validation.mjs";
+import { APP_VERSION } from "./version.mjs";
 
 const maximumBytes = 1_000_000;
 const maximumCandidates = 12;
@@ -317,7 +318,7 @@ async function readPublicPage(rawUrl, allowPrivateNetworks) {
     const requestOptions = {
       protocol: "https:", hostname: url.hostname, port, path: `${url.pathname}${url.search}`,
       method: "GET", maxHeaderSize: 8_192,
-      headers: { Accept: "text/html,application/xhtml+xml", "Accept-Encoding": "identity", "User-Agent": "AMP-Community-Dashboard/2.4.4" },
+      headers: { Accept: "text/html,application/xhtml+xml", "Accept-Encoding": "identity", "User-Agent": `AMP-Community-Dashboard/${APP_VERSION}` },
       servername: isIP(url.hostname) ? undefined : url.hostname,
       // Node requests custom lookups with { all: true }. Returning a pinned
       // literal address in that form prevents a second DNS lookup and closes
