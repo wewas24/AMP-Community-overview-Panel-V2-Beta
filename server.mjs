@@ -16,6 +16,7 @@ import { sameOriginValues, validMutationRequest } from "./src/request-guards.mjs
 import { permissionFor, hasPermission } from "./src/permissions.mjs";
 import { isUploadFilename, parseUploadedImage } from "./src/uploads.mjs";
 import { APP_VERSION } from "./src/version.mjs";
+import { downsampleMetrics } from "./src/metrics.mjs";
 
 const contentTypes = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".webmanifest": "application/manifest+json; charset=utf-8" };
 const store = await openStore();
@@ -179,6 +180,21 @@ async function sendNotifications(subject, message) {
 
 const events = new EventHub();
 const alertSentAt = new Map();
+const metricsCacheTtlMs = 30_000;
+const metricsCache = new Map();
+
+function cachedMetrics(serverId, hours = 24) {
+  const key = `${serverId}:${hours}`;
+  const cached = metricsCache.get(key);
+  if (cached && Date.now() - cached.createdAt < metricsCacheTtlMs) return cached.value;
+  const value = store.metrics(serverId, hours);
+  metricsCache.set(key, { createdAt: Date.now(), value });
+  return value;
+}
+
+function invalidateMetricsCache(serverId) {
+  for (const key of metricsCache.keys()) if (key.startsWith(`${serverId}:`)) metricsCache.delete(key);
+}
 
 async function sendRuleAlert(server, key, subject, message) {
   const marker = `${server.id}:${key}`;
@@ -189,6 +205,7 @@ async function sendRuleAlert(server, key, subject, message) {
 }
 
 async function observedStatus(server, status, saved) {
+  if (saved?.metricsAdded) invalidateMetricsCache(server.id);
   const delta = statusDelta(server, status, saved);
   if (delta) {
     events.publish("server-status", delta, { key: `server-status:${server.id}` });
@@ -334,9 +351,15 @@ async function api(request, response, url) {
   if (request.method === "GET" && path === "/api/v1/public/statuses") return json(response, 200, { statuses: [...store.allStatuses()].map(([id, status]) => ({ id, status })) });
   if (request.method === "GET" && path === "/api/v1/public/metrics") {
     const visible = new Set(store.allServers().filter((server) => server.visibility !== "hidden").map((server) => server.id));
-    const requestedServerId = String(url.searchParams.get("serverId") || "");
-    const ids = requestedServerId && visible.has(requestedServerId) ? [requestedServerId] : requestedServerId ? [] : [...visible];
-    return json(response, 200, { metrics: Object.fromEntries(ids.map((id) => [id, store.metrics(id, 24)])) });
+    const requestedIds = String(url.searchParams.get("serverIds") || url.searchParams.get("serverId") || "").split(",").map((id) => id.trim()).filter(Boolean);
+    const ids = requestedIds.length ? [...new Set(requestedIds)].slice(0, 12).filter((id) => visible.has(id)) : [...visible];
+    const requestedPoints = Number(url.searchParams.get("points"));
+    const pointLimit = Number.isInteger(requestedPoints) && requestedPoints >= 8 && requestedPoints <= 120 ? requestedPoints : null;
+    const metrics = Object.fromEntries(ids.map((id) => {
+      const points = cachedMetrics(id, 24);
+      return [id, pointLimit ? downsampleMetrics(points, pointLimit) : points];
+    }));
+    return json(response, 200, { metrics });
   }
   if (request.method === "GET" && path === "/api/v1/session") {
     const session = sessionFrom(request);

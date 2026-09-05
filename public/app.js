@@ -13,6 +13,8 @@ let liveEvents = null;
 let advancedMode = localStorage.getItem("amp_v2_ui_mode") === "advanced";
 let metricObserver = null;
 const metricRequests = new Set();
+const pendingMetricIds = new Set();
+let metricBatchTimer = null;
 
 async function api(path, options = {}) {
   const method = String(options.method || "GET").toUpperCase();
@@ -176,10 +178,28 @@ function metricChart(points) {
   const wrap = el("div", "metric-chart"); wrap.append(el("span", "", "Latenzverlauf (24 h)")); const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); svg.setAttribute("viewBox", `0 0 ${width} ${height}`); svg.setAttribute("role", "img"); svg.setAttribute("aria-label", "Latenzverlauf der letzten 24 Stunden"); const line = document.createElementNS("http://www.w3.org/2000/svg", "path"); line.setAttribute("d", path); svg.append(line); wrap.append(svg); return wrap;
 }
 function metricLoaded(serverId) { return Object.hasOwn(dashboard.metrics, serverId); }
-function requestMetrics(serverId) {
-  if (!serverId || metricLoaded(serverId) || metricRequests.has(serverId)) return;
-  metricRequests.add(serverId);
-  loadMetrics(serverId).catch(() => {}).finally(() => metricRequests.delete(serverId));
+function requestMetrics(serverId, force = false) {
+  if (!serverId || metricRequests.has(serverId) || (!force && metricLoaded(serverId))) return;
+  metricRequests.add(serverId); pendingMetricIds.add(serverId);
+  if (!metricBatchTimer) metricBatchTimer = window.setTimeout(flushMetricRequests, 40);
+}
+async function flushMetricRequests() {
+  metricBatchTimer = null;
+  const ids = [...pendingMetricIds].slice(0, 12); ids.forEach((id) => pendingMetricIds.delete(id));
+  if (!ids.length) return;
+  try {
+    const response = await api(`public/metrics?serverIds=${encodeURIComponent(ids.join(","))}&points=120`);
+    if (!response.ok) return;
+    const metrics = (await response.json()).metrics || {};
+    dashboard.metrics = { ...dashboard.metrics, ...metrics };
+    if (isAdvanced()) ids.forEach((id) => { const server = dashboard.servers.find((item) => item.id === id); if (server) replaceServerCard(server); });
+  } catch {
+    // A later visibility event retries the small batch. Rendering must never
+    // fail merely because optional chart history is temporarily unavailable.
+  } finally {
+    ids.forEach((id) => metricRequests.delete(id));
+    if (pendingMetricIds.size && !metricBatchTimer) metricBatchTimer = window.setTimeout(flushMetricRequests, 40);
+  }
 }
 function observeVisibleCharts() {
   metricObserver?.disconnect(); metricObserver = null;
@@ -197,20 +217,7 @@ function observeVisibleCharts() {
 }
 function applyMetricPoint(value) {
   if (!value?.serverId || !value.point || !metricLoaded(value.serverId)) return;
-  const previous = dashboard.metrics[value.serverId] || [];
-  dashboard.metrics = { ...dashboard.metrics, [value.serverId]: [...previous, value.point].slice(-300) };
-  const server = dashboard.servers.find((item) => item.id === value.serverId);
-  if (server && isAdvanced()) replaceServerCard(server);
-}
-async function loadMetrics(serverId = "") {
-  const response = await api(`public/metrics${serverId ? `?serverId=${encodeURIComponent(serverId)}` : ""}`);
-  if (!response.ok) return;
-  const metrics = (await response.json()).metrics || {};
-  dashboard.metrics = serverId ? { ...dashboard.metrics, ...metrics } : metrics;
-  if (serverId) {
-    const server = dashboard.servers.find((item) => item.id === serverId);
-    if (server && isAdvanced()) replaceServerCard(server);
-  } else renderServers();
+  requestMetrics(value.serverId, true);
 }
 async function loadPublic() {
   const response = await api("public/servers"); if (!response.ok) throw new Error(await message(response)); applyDashboard(await response.json());
