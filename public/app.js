@@ -296,13 +296,22 @@ function frameAddressDiscovery(document, communityUrl) {
 }
 function applyDiscovery(found) {
   const changes = [];
+  const recommendedMonitoring = found.monitoringTarget || found.connection;
+  const currentGameHost = $("#server-host").value.trim().toLowerCase();
+  const currentGamePort = Number($("#server-port").value || 0);
+  const currentMonitorHost = $("#monitor-host").value.trim().toLowerCase();
+  const currentMonitorPort = Number($("#monitor-port").value || 0);
+  const mirroredAutomaticTarget = Boolean(currentMonitorHost && currentGameHost && currentMonitorHost === currentGameHost && currentMonitorPort === currentGamePort);
+  const useRecommendedTarget = Boolean(found.monitoringTarget) && (!currentMonitorHost || !currentMonitorPort || mirroredAutomaticTarget);
   if (found.title && !$("#server-name").value.trim()) { field("#server-name", found.title); changes.push("Name"); }
   if (found.connection?.host && !$("#server-host").value.trim()) { field("#server-host", found.connection.host); changes.push("Spieladresse"); }
   if (found.connection?.port && !$("#server-port").value) { field("#server-port", found.connection.port); changes.push("Port"); }
   if (found.connection?.profile && $("#server-profile").value === "auto") { field("#server-profile", found.connection.profile); changes.push("Abfrageprofil"); }
-  if (found.connection?.host && !$("#monitor-host").value.trim()) { field("#monitor-host", found.connection.host); changes.push("Monitoring-Adresse"); }
-  if (found.connection?.port && !$("#monitor-port").value) { field("#monitor-port", found.connection.port); changes.push("Monitoring-Port"); }
-  if (found.connection?.profile && $("#monitor-profile").value === "auto") { field("#monitor-profile", found.connection.profile); changes.push("Monitoring-Profil"); }
+  if (recommendedMonitoring?.host && (!$("#monitor-host").value.trim() || useRecommendedTarget)) { field("#monitor-host", recommendedMonitoring.host); changes.push("Monitoring-Adresse"); }
+  if (recommendedMonitoring?.port && (!$("#monitor-port").value || useRecommendedTarget)) { field("#monitor-port", recommendedMonitoring.port); changes.push(found.monitoringTarget ? "Status-Port" : "Monitoring-Port"); }
+  if (recommendedMonitoring?.profile && ($("#monitor-profile").value === "auto" || useRecommendedTarget)) { field("#monitor-profile", recommendedMonitoring.profile); changes.push("Monitoring-Profil"); }
+  if (found.monitoringTarget?.strategy === "arma3-query-offset") changes.push("Arma-3-Query-Regel (+1)");
+  if (found.monitoringTarget?.strategy === "community-query-port") changes.push("Steam-Query-Port aus Community-Seite");
   if (found.connection?.profile === "teamspeak" && !$("#server-ts-query").value) { field("#server-ts-query", 10011); field("#monitor-ts-query", 10011); changes.push("TeamSpeak-Query-Port"); }
   if (found.connectUrl && !$("#server-connect-url").value.trim()) { field("#server-connect-url", found.connectUrl); changes.push("Verbindungslink"); }
   return changes;
@@ -341,7 +350,10 @@ async function discoverServerAddress() {
     if (!response.ok) return setServerMessage(await message(response), true);
     let found = await response.json();
     const frameFound = await sameOriginFrameDiscovery(communityUrl);
-    if (frameFound?.connectUrl || (!found.connection && frameFound?.connection)) found = { ...found, ...frameFound, found: true, confidence: "high" };
+    // The server-side extractor validates and classifies the full page. An
+    // iframe is merely a fallback for pages whose address appears only after
+    // client-side rendering; it must never overwrite a classified result.
+    if (!found.connection && frameFound?.connection) found = { ...found, ...frameFound, found: true, confidence: "high" };
     const changes = applyDiscovery(found);
     if (changes.length) {
       const alternatives = Math.max(0, Number(found.candidates?.length || 0) - 1);

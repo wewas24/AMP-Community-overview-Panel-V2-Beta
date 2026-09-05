@@ -1,4 +1,4 @@
-# AMP Community Dashboard v2.4.1
+# AMP Community Dashboard v2.4.2
 
 Eine öffentliche Übersicht für AMP-Community-Seiten. Die AMP-Seite bleibt die vollständige Detailansicht; das Dashboard bündelt Status, Hinweise, Health-Werte und bewusst freigegebene Verbindungslinks.
 
@@ -9,7 +9,8 @@ Eine öffentliche Übersicht für AMP-Community-Seiten. Die AMP-Seite bleibt die
 - Gesundheitswert, Uptime und Latenzdiagramm pro Server. Statuswechsel und Messwerte werden getrennt und platzsparend gespeichert.
 - Eigene Community-URL, Spielserver-Verbindung und optionale Monitoring-Adresse je Server.
 - Adapter für TCP, Steam/Source, Minecraft Java und TeamSpeak; bei `Automatisch` werden passende sichere Abfragen ausprobiert.
-- Die Erkennung liest sichere, öffentliche AMP-Community-Seiten aus: Verbindungslinks, sichtbare Host-Port-Angaben, Datenfelder und eingebettete JSON-Seitendaten. Der erkannte Spielport wird zugleich als Monitoring-Ziel übernommen.
+- Die Erkennung liest sichere, öffentliche AMP-Community-Seiten aus: Verbindungslinks, sichtbare Host-Port-Angaben, Datenfelder und eingebettete JSON-Seitendaten. Bei Arma 3 werden Spielport und Steam-Query-Port getrennt übernommen: Der Connect-Button nutzt die Spieladresse, die Statusabfrage den von der Community-Seite angegebenen Query-Port – sonst als sichere Regel Spielport `+1`.
+- Eine als TeamSpeak bezeichnete Community-Seite wird als TeamSpeak erkannt, auch wenn das AMP-Template einen generischen Steam-Link liefert. Für Spielerzahlen muss der ServerQuery-Port (normalerweise TCP `10011`) vom Dashboard erreichbar sein.
 - Ein erfolgreicher TCP-Handshake wird als **Erreichbar** angezeigt. Damit bleibt ein Server mit messbarer Latenz nicht fälschlich „Unbekannt“, auch wenn kein spieleigenes Statusprotokoll verfügbar ist.
 - Detailansicht der AMP-Community-Seite in einem erst nach Klick geladenen Iframe.
 - Servergruppen mit Besucherfilter, Kategorien und Sortierung.
@@ -52,7 +53,7 @@ Es werden keine zusätzlichen npm-Pakete benötigt.
 
    ```bash
    sudo mkdir -p /opt/amp-community-dashboard
-   sudo unzip /opt/amp-community-dashboard-v2.4.1-status-metrics.zip -d /opt/amp-community-dashboard
+   sudo unzip /opt/amp-community-dashboard-v2.4.2-arma3-auto-query.zip -d /opt/amp-community-dashboard
    sudo useradd --system --home /opt/amp-community-dashboard --shell /usr/sbin/nologin amp 2>/dev/null || true
    sudo chown -R amp:amp /opt/amp-community-dashboard
    ```
@@ -82,20 +83,20 @@ Es werden keine zusätzlichen npm-Pakete benötigt.
 
 Die Übersicht ist dann beispielsweise unter `https://amp.example.com/uebersicht/` verfügbar.
 
-## Update auf v2.4.1
+## Update auf v2.4.2
 
 1. Dienst stoppen und den vollständigen bisherigen Ordner sichern:
 
    ```bash
    sudo systemctl stop amp-community-dashboard
-   sudo cp -a /opt/amp-community-dashboard /opt/amp-community-dashboard-before-v2.4.1
+   sudo cp -a /opt/amp-community-dashboard /opt/amp-community-dashboard-before-v2.4.2
    ```
 
 2. Das Paket in einen temporären Ordner entpacken. Anschließend alle Dateien **außer** `data/` in den bestehenden Projektordner kopieren. `data/` weder löschen noch überschreiben.
 
    ```bash
    sudo mkdir -p /opt/amp-dashboard-update
-   sudo unzip -o /opt/amp-community-dashboard-v2.4.1-status-metrics.zip -d /opt/amp-dashboard-update
+   sudo unzip -o /opt/amp-community-dashboard-v2.4.2-arma3-auto-query.zip -d /opt/amp-dashboard-update
    sudo rsync -a --exclude=data/ /opt/amp-dashboard-update/ /opt/amp-community-dashboard/
    sudo chown -R amp:amp /opt/amp-community-dashboard
    ```

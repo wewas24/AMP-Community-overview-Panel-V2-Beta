@@ -11,6 +11,29 @@ test("übernimmt einen Steam-Connect-Link von einer öffentlichen Community-Seit
   assert.equal(result.connection.profile, "steam");
 });
 
+test("trennt bei Arma 3 Spiel- und Steam-Query-Port aus der Community-Seite", () => {
+  const result = extractCommunityData('<h1>Arma 3</h1><p>Spieladresse: arma.example.net:2302</p><a href="steam://connect/arma.example.net:2303">Verbinden</a>', "https://amp.example.com/c/demo");
+  assert.equal(result.application, "Arma 3");
+  assert.equal(result.connection.host, "arma.example.net");
+  assert.equal(result.connection.port, 2302);
+  assert.equal(result.connectUrl, "steam://connect/arma.example.net:2303");
+  assert.deepEqual(result.monitoringTarget, {
+    host: "arma.example.net",
+    port: 2303,
+    profile: "steam",
+    source: "Steam-Verbindungslink der Community-Seite",
+    strategy: "community-query-port"
+  });
+});
+
+test("ignoriert einen generischen Steam-Link bei einer eindeutig als TeamSpeak bezeichneten Seite", () => {
+  const result = extractCommunityData('<h1>TeamSpeak6</h1><a href="steam://connect/voice.example.net:9987">Öffnen</a>', "https://amp.example.com/c/demo");
+  assert.equal(result.application, "TeamSpeak");
+  assert.equal(result.connection.profile, "teamspeak");
+  assert.equal(result.connection.port, 9987);
+  assert.equal(result.connectUrl, "");
+});
+
 test("erkennt TeamSpeak-Verbindungsdaten", () => {
   const result = endpointFromConnectLink("ts3server://voice.example.net?port=9987");
   assert.equal(result.connection.host, "voice.example.net");

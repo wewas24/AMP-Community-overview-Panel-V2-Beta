@@ -51,10 +51,15 @@ function profileFromText(value) {
   return "auto";
 }
 
+function adapterFromContext(value) {
+  return /\barma\s*3\b/i.test(String(value || "")) ? "arma3" : "";
+}
+
 function applicationFromProfile(profile, context = "") {
   const source = String(context || "").toLowerCase();
   if (/(?:teamspeak|ts3|ts5)/.test(source) || profile === "teamspeak") return "TeamSpeak";
   if (/(?:minecraft|mc-java|java edition)/.test(source) || profile === "minecraft") return "Minecraft Java";
+  if (adapterFromContext(source) === "arma3") return "Arma 3";
   if (/(?:arma)/.test(source)) return "Arma / Steam";
   if (/(?:steam|source engine|a2s|ark|rust|valheim|palworld|satisfactory|cs2|counter.?strike)/.test(source) || profile === "steam") return "Steam / Source";
   return "";
@@ -75,6 +80,7 @@ function addCandidate(list, connection, options = {}) {
     source: options.source || "Adresse auf der Community-Seite",
     score: Number(options.score) || 0,
     application: options.application || applicationFromProfile(profile, options.context),
+    adapter: options.adapter || adapterFromContext(options.context),
     confidence: confidenceFromScore(Number(options.score) || 0)
   };
   const key = `${item.connection.host.toLowerCase()}:${item.connection.port}`;
@@ -182,11 +188,32 @@ function scanEmbeddedJson(source, communityUrl, candidates) {
 export function extractCommunityData(html, communityUrl) {
   const source = String(html || "");
   const candidates = [];
+  // Links alone often contain only a port. The page title and visible text
+  // identify the actual application (for example, Arma 3) reliably.
+  const pageContext = `${firstTitle(source)} ${textOnly(source).slice(0, 32_000)}`;
   const links = [...source.matchAll(/\bhref\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))/gi)];
   for (const link of links) {
     const raw = decodeHtml(link[1] || link[2] || link[3] || "");
     const found = endpointFromConnectLink(raw);
-    if (found) addCandidate(candidates, found.connection, { ...found, score: 100, context: raw });
+    if (found) {
+      const pageProfile = profileFromText(pageContext);
+      // Some AMP community templates render a generic steam:// link even
+      // for a TeamSpeak or Minecraft card. The page's explicit application
+      // label is more reliable than that generic template link. Do not save
+      // an invalid launcher URL in that situation.
+      const genericSteamLinkForKnownService = found.connection.profile === "steam" && ["teamspeak", "minecraft"].includes(pageProfile);
+      const connection = genericSteamLinkForKnownService ? { ...found.connection, profile: pageProfile } : found.connection;
+      addCandidate(candidates, connection, {
+        ...found,
+        connection,
+        profile: connection.profile,
+        connectUrl: genericSteamLinkForKnownService ? "" : found.connectUrl,
+        source: genericSteamLinkForKnownService ? "Verbindungsadresse der Community-Seite" : found.source,
+        application: applicationFromProfile(connection.profile, pageContext),
+        score: 100,
+        context: `${pageContext} ${raw}`
+      });
+    }
   }
   scanAttributeCandidates(source, communityUrl, candidates);
   scanEmbeddedJson(source, communityUrl, candidates);
@@ -200,9 +227,61 @@ export function extractCommunityData(html, communityUrl) {
   }
 
   const ordered = candidates.sort((left, right) => right.score - left.score).slice(0, maximumCandidates);
-  const best = ordered[0];
+  let best = ordered[0];
   if (!best) return { found: false, title: firstTitle(source), application: "", confidence: "none", connection: null, connectUrl: "", source: "Auf der Community-Seite wurde keine Spieladresse gefunden", candidates: [] };
-  return { found: true, title: firstTitle(source), application: best.application, confidence: best.confidence, connection: best.connection, connectUrl: best.connectUrl, source: best.source, candidates: ordered.map(({ score, ...candidate }) => candidate) };
+
+  let monitoringTarget = null;
+  if (adapterFromContext(pageContext) === "arma3") {
+    const steamLink = ordered.find((candidate) => candidate.source === "Steam-Verbindungslink" && candidate.connection.profile === "steam");
+    const gameAddress = ordered.find((candidate) => candidate.source !== "Steam-Verbindungslink" && candidate.connection.profile === "steam");
+
+    // AMP commonly publishes both addresses for Arma 3: the game port in
+    // page data and a Steam connect link that uses the A2S query port. Keep
+    // them separate so the Connect button and the status adapter are both
+    // aimed at the right service.
+    if (gameAddress && steamLink && gameAddress.connection.port !== steamLink.connection.port) {
+      best = { ...gameAddress, connectUrl: steamLink.connectUrl || gameAddress.connectUrl };
+      monitoringTarget = {
+        host: steamLink.connection.host,
+        port: steamLink.connection.port,
+        profile: "steam",
+        source: "Steam-Verbindungslink der Community-Seite",
+        strategy: "community-query-port"
+      };
+    } else if (steamLink) {
+      monitoringTarget = {
+        host: steamLink.connection.host,
+        port: steamLink.connection.port,
+        profile: "steam",
+        source: "Steam-Verbindungslink der Community-Seite",
+        strategy: "community-query-port"
+      };
+    } else if (best.connection.port < 65_535) {
+      // Official Arma 3 defaults use the Steam query port one UDP port after
+      // the game port. Only use this deterministic fallback if the page did
+      // not publish a Steam link with the precise query address.
+      monitoringTarget = {
+        host: best.connection.host,
+        port: best.connection.port + 1,
+        profile: "steam",
+        source: "Arma-3-Query-Port (+1)",
+        strategy: "arma3-query-offset"
+      };
+    }
+  }
+
+  const { score: _score, ...publicBest } = best;
+  return {
+    found: true,
+    title: firstTitle(source),
+    application: adapterFromContext(pageContext) === "arma3" ? "Arma 3" : best.application,
+    confidence: best.confidence,
+    connection: best.connection,
+    connectUrl: best.connectUrl,
+    monitoringTarget,
+    source: best.source,
+    candidates: ordered.map(({ score, ...candidate }) => candidate)
+  };
 }
 
 function allowedCommunityDomain(communityUrl, trustedDomains = []) {
@@ -225,7 +304,7 @@ async function readPublicPage(rawUrl, allowPrivateNetworks) {
     const requestOptions = {
       protocol: "https:", hostname: url.hostname, port, path: `${url.pathname}${url.search}`,
       method: "GET", maxHeaderSize: 8_192,
-      headers: { Accept: "text/html,application/xhtml+xml", "Accept-Encoding": "identity", "User-Agent": "AMP-Community-Dashboard/2.4.1" },
+      headers: { Accept: "text/html,application/xhtml+xml", "Accept-Encoding": "identity", "User-Agent": "AMP-Community-Dashboard/2.4.2" },
       servername: isIP(url.hostname) ? undefined : url.hostname,
       // Node requests custom lookups with { all: true }. Returning a pinned
       // literal address in that form prevents a second DNS lookup and closes
