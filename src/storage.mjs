@@ -268,7 +268,10 @@ export class Store {
     const stateSince = changed ? timestamp : previous?.state_since_at || timestamp;
     const failures = healthy ? 0 : (previous?.failure_count || 0) + 1;
     const addHistory = changed;
-    const addMetrics = !previous?.last_metric_at || Date.parse(timestamp) - Date.parse(previous.last_metric_at) >= 5 * 60_000;
+    // Failed handshakes can be returned in a few milliseconds. That is not a
+    // usable game latency, so failed checks must never overwrite live metrics.
+    const addMetrics = healthy && (!previous?.last_metric_at || Date.parse(timestamp) - Date.parse(previous.last_metric_at) >= 5 * 60_000);
+    const latencyMs = healthy ? status.latencyMs ?? null : null;
     this.db.prepare(`INSERT INTO status_current(server_id,state,detail,latency_ms,players,max_players,version,map_name,checked_at,last_success_at,state_since_at,failure_count,last_history_at,last_metric_at)
       VALUES(:serverId,:state,:detail,:latencyMs,:players,:maxPlayers,:version,:map,:checkedAt,:lastSuccessAt,:stateSinceAt,:failureCount,:lastHistoryAt,:lastMetricAt)
       ON CONFLICT(server_id) DO UPDATE SET state=excluded.state,detail=excluded.detail,latency_ms=excluded.latency_ms,players=excluded.players,max_players=excluded.max_players,version=excluded.version,map_name=excluded.map_name,checked_at=excluded.checked_at,last_success_at=excluded.last_success_at,state_since_at=excluded.state_since_at,failure_count=excluded.failure_count,last_history_at=excluded.last_history_at,last_metric_at=excluded.last_metric_at`).run({
@@ -284,14 +287,14 @@ export class Store {
       failureCount: failures,
        lastHistoryAt: addHistory ? timestamp : previous?.last_history_at || null,
        lastMetricAt: addMetrics ? timestamp : previous?.last_metric_at || null,
-      latencyMs: status.latencyMs ?? null,
+      latencyMs,
       players: status.players ?? null,
       maxPlayers: status.maxPlayers ?? null,
       version: status.version ?? null,
       map: status.map ?? null
     });
-    if (addHistory) this.db.prepare("INSERT INTO status_history(server_id,state,latency_ms,players,max_players,checked_at) VALUES(?,?,?,?,?,?)").run(serverId, status.state, status.latencyMs ?? null, status.players ?? null, status.maxPlayers ?? null, timestamp);
-    if (addMetrics) this.db.prepare("INSERT INTO metrics_history(server_id,latency_ms,players,max_players,checked_at) VALUES(?,?,?,?,?)").run(serverId, status.latencyMs ?? null, status.players ?? null, status.maxPlayers ?? null, timestamp);
+    if (addHistory) this.db.prepare("INSERT INTO status_history(server_id,state,latency_ms,players,max_players,checked_at) VALUES(?,?,?,?,?,?)").run(serverId, status.state, latencyMs, status.players ?? null, status.maxPlayers ?? null, timestamp);
+    if (addMetrics) this.db.prepare("INSERT INTO metrics_history(server_id,latency_ms,players,max_players,checked_at) VALUES(?,?,?,?,?)").run(serverId, latencyMs, status.players ?? null, status.maxPlayers ?? null, timestamp);
     return { changed, previous: previous ? this.statusRow(previous) : null, current: this.statusRow(this.getStatus(serverId)) };
   }
 

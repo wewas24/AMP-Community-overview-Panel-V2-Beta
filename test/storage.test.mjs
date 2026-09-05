@@ -38,6 +38,8 @@ test("speichert Statusdaten ohne interne Probe-Antwort", async () => {
     store.saveStatus("server-1", { state: "REACHABLE", detail: "TCP erreichbar.", checkedAt: new Date(Date.parse(timestamp) + 60_000).toISOString(), latencyMs: 18 });
     assert.equal(store.getStatus("server-1").last_success_at !== null, true);
     assert.equal(store.uptime("server-1", 24) !== null, true);
+    store.saveStatus("server-1", { state: "CONNECTION_REFUSED", detail: "Port geschlossen.", checkedAt: new Date(Date.parse(timestamp) + 90_000).toISOString(), latencyMs: 1 });
+    assert.equal(store.statusRow(store.getStatus("server-1")).latencyMs, null);
     store.addAdmin({ username: "custom-user", salt: "salt", hash: "hash", role: "custom", createdAt: timestamp });
     store.setAdminPermissions("custom-user", ["dashboard.read", "servers.write", "not-a-permission"]);
     assert.deepEqual([...store.permissionsFor(store.getAdmin("custom-user"))].sort(), ["dashboard.read", "servers.write"]);

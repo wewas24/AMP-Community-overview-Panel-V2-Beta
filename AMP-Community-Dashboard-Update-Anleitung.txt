@@ -1,18 +1,18 @@
-AMP Community Dashboard v2.4.0 – Update-Anleitung
+AMP Community Dashboard v2.4.1 – Update-Anleitung
 
 Diese Anleitung verwendet ausschließlich Beispielwerte und bewahrt alle vorhandenen Daten.
 
 1. Dienst stoppen und Sicherung erstellen
 
    sudo systemctl stop amp-community-dashboard
-   sudo cp -a /opt/amp-community-dashboard /opt/amp-community-dashboard-before-v2.4.0
+   sudo cp -a /opt/amp-community-dashboard /opt/amp-community-dashboard-before-v2.4.1
 
 2. Update sicher einspielen
 
 Das Paket nicht direkt über den Projektordner entpacken. In einen temporären Ordner entpacken und danach alle Dateien außer data/ übernehmen:
 
    sudo mkdir -p /opt/amp-dashboard-update
-   sudo unzip -o /opt/amp-community-dashboard-v2.4.0-community-discovery.zip -d /opt/amp-dashboard-update
+   sudo unzip -o /opt/amp-community-dashboard-v2.4.1-status-metrics.zip -d /opt/amp-dashboard-update
    sudo rsync -a --exclude=data/ /opt/amp-dashboard-update/ /opt/amp-community-dashboard/
    sudo chown -R amp:amp /opt/amp-community-dashboard
 

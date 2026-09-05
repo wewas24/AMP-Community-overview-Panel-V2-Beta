@@ -34,6 +34,7 @@ function stateInfo(status = {}) {
   if (["OFFLINE", "CONNECTION_REFUSED", "TIMEOUT"].includes(raw)) return { label: "Offline", className: "offline" };
   return { label: "Unbekannt", className: "unknown" };
 }
+function hasLiveReachability(status = {}) { return !status.stale && ["ONLINE", "REACHABLE"].includes(status.state); }
 function relativeTime(value) {
   if (!value) return "noch nicht geprüft";
   const seconds = Math.max(0, Math.round((Date.now() - Date.parse(value)) / 1000));
@@ -122,15 +123,16 @@ function serverCard(server) {
   if (server.description) card.append(el("p", "card-description", server.description));
   if (server.notice) card.append(el("p", "notice", `Hinweis: ${server.notice}`));
   const metrics = el("div", "metrics");
-  if (server.display?.showPlayers && server.status?.players !== null && server.status?.players !== undefined) metrics.append(metric("Spieler", `${server.status.players}${server.status.maxPlayers ? ` / ${server.status.maxPlayers}` : ""}`));
-  if (server.display?.showPing && server.status?.latencyMs !== null && server.status?.latencyMs !== undefined) metrics.append(metric("Latenz", `${server.status.latencyMs} ms`));
+  const liveReachability = hasLiveReachability(server.status);
+  if (liveReachability && server.display?.showPlayers && server.status?.players !== null && server.status?.players !== undefined) metrics.append(metric("Spieler", `${server.status.players}${server.status.maxPlayers ? ` / ${server.status.maxPlayers}` : ""}`));
+  if (liveReachability && server.display?.showPing && server.status?.latencyMs !== null && server.status?.latencyMs !== undefined) metrics.append(metric("Latenz", `${server.status.latencyMs} ms`));
   if (isAdvanced() && server.display?.showVersion && server.status?.map) metrics.append(metric("Map", server.status.map));
   if (isAdvanced() && server.display?.showVersion && server.status?.version) metrics.append(metric("Version", server.status.version));
   if (isAdvanced() && server.uptime?.day !== null && server.uptime?.day !== undefined) metrics.append(metric("Uptime 24 h", `${server.uptime.day} %`));
-  if (isAdvanced()) metrics.append(metric("Health", `${server.healthScore ?? 0} / 100`));
+  if (isAdvanced() && liveReachability) metrics.append(metric("Health", `${server.healthScore ?? 0} / 100`));
   if (metrics.children.length) card.append(metrics);
   const meta = el("p", "card-meta", `${relativeTime(server.status?.checkedAt)} geprüft${server.group ? ` · ${server.group}` : ""}`); meta.title = server.status?.detail || ""; card.append(meta);
-  if (isAdvanced()) { const chart = metricChart(dashboard.metrics?.[server.id] || []); if (chart) card.append(chart); }
+  if (isAdvanced() && liveReachability) { const chart = metricChart(dashboard.metrics?.[server.id] || []); if (chart) card.append(chart); }
   const actions = el("div", "card-actions"); actions.append(linkButton("Öffnen", server.communityUrl)); const connect = connectButton(server); const copyAddress = copyAddressButton(server); if (connect) actions.append(connect); else if (copyAddress) actions.append(copyAddress); const details = el("button", "button secondary", "Details"); details.type = "button"; details.addEventListener("click", () => openDetails(server)); actions.append(details);
   if (server.links?.discord) actions.append(linkButton("Discord", server.links.discord)); if (server.links?.website) actions.append(linkButton("Webseite", server.links.website)); card.append(actions);
   return card;
@@ -160,7 +162,7 @@ function setDetailRefresh(seconds) { clearDetailTimer(); localStorage.setItem("a
 function openDetails(server) {
   activeDetails = server; text($("#details-title"), server.name); $("#open-community").href = server.communityUrl;
   const summary = $("#detail-summary"); summary.replaceChildren(); const state = stateInfo(server.status); summary.append(el("span", `status ${state.className}`, state.label), el("span", "", relativeTime(server.status?.checkedAt)));
-  if (server.status?.players !== null && server.status?.players !== undefined) summary.append(el("span", "", `${server.status.players}${server.status.maxPlayers ? ` / ${server.status.maxPlayers}` : ""} Spieler`));
+  if (hasLiveReachability(server.status) && server.status?.players !== null && server.status?.players !== undefined) summary.append(el("span", "", `${server.status.players}${server.status.maxPlayers ? ` / ${server.status.maxPlayers}` : ""} Spieler`));
   if (isAdvanced()) { summary.append(el("span", "", `Health ${server.healthScore ?? 0} / 100`)); const technical = document.createElement("details"); technical.className = "technical-details"; technical.append(el("summary", "", "Technische Hinweise"), el("p", "", server.status?.detail || "Keine technischen Hinweise vorhanden.")); summary.append(technical); }
   $("#iframe-shell").replaceChildren(); const frame = document.createElement("iframe"); frame.title = `${server.name} – AMP Community-Seite`; frame.loading = "lazy"; frame.allow = "fullscreen"; frame.referrerPolicy = "strict-origin-when-cross-origin"; frame.src = server.communityUrl; $("#iframe-shell").append(frame);
   const stored = localStorage.getItem("amp_v2_detail_refresh"); const seconds = stored === null ? Number(dashboard.settings.defaultDetailRefreshSeconds || 0) : Number(stored); $("#detail-refresh").value = String(seconds); setDetailRefresh(seconds); $("#details-dialog").showModal();

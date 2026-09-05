@@ -140,7 +140,7 @@ async function body(request, maximum = 128_000) {
 }
 
 function activityText(entries) {
-  const lines = ["AMP Community Dashboard v2.4.0 – Änderungsprotokoll", `Erstellt: ${new Date().toISOString()}`, "Aufbewahrung: sieben Tage", ""];
+  const lines = ["AMP Community Dashboard v2.4.1 – Änderungsprotokoll", `Erstellt: ${new Date().toISOString()}`, "Aufbewahrung: sieben Tage", ""];
   for (const entry of entries) lines.push(`${entry.created_at} · ${entry.username} · ${entry.action}${entry.subject ? ` · ${entry.subject}` : ""}${entry.detail ? ` – ${entry.detail}` : ""}`);
   return `${lines.join("\n")}\n`;
 }
@@ -204,7 +204,9 @@ function statusWithFreshness(server, status) {
 
 function healthScore(server, status, uptime) {
   if (!status?.checkedAt || status.stale) return 0;
-  const availability = uptime ?? (["ONLINE", "REACHABLE"].includes(status.state) ? 100 : 0);
+  const healthy = ["ONLINE", "REACHABLE"].includes(status.state);
+  if (!healthy) return 0;
+  const availability = uptime ?? 100;
   const latency = Number(status.latencyMs || 0);
   const latencyScore = !latency ? 15 : latency < 80 ? 20 : latency < 180 ? 15 : latency < 400 ? 8 : 2;
   const stateScore = status.state === "ONLINE" ? 20 : status.state === "REACHABLE" ? 16 : 0;
@@ -272,7 +274,7 @@ function uploadedImage(input) {
 
 async function api(request, response, url) {
   const path = url.pathname;
-  if (request.method === "GET" && path === "/health") return json(response, 200, { ok: true, version: "2.4.0", time: new Date().toISOString() });
+  if (request.method === "GET" && path === "/health") return json(response, 200, { ok: true, version: "2.4.1", time: new Date().toISOString() });
   if (request.method === "GET" && path === "/ready") return json(response, 200, { ready: Boolean(store.db), monitoring: !monitor.stopped });
   if (request.method === "GET" && path === "/api/v1/public/events") { setHeaders(response); events.subscribe(request, response); return; }
   if (request.method === "GET" && ["/api/v1/public/servers", "/api/servers"].includes(path)) return json(response, 200, dashboardPayload());
@@ -392,7 +394,7 @@ async function api(request, response, url) {
     const saved = store.saveSettings(settings); store.addActivity(session.username, "Seiteneinstellungen geändert"); events.publish("dashboard", dashboardPayload()); return json(response, 200, await adminSettings(saved));
   }
   if (request.method === "POST" && remainder === "notifications/test") {
-    const deliveries = await sendNotifications("Test: AMP Community Dashboard v2.4.0", "Dies ist eine Testbenachrichtigung vom AMP Community Dashboard.");
+    const deliveries = await sendNotifications("Test: AMP Community Dashboard v2.4.1", "Dies ist eine Testbenachrichtigung vom AMP Community Dashboard.");
     if (!deliveries.length) return error(response, 400, "Es ist kein funktionierender SMTP- oder Webhook-Kanal eingerichtet.");
     store.addActivity(session.username, "Benachrichtigungstest gesendet", "", "ok", deliveries.join(", ")); return json(response, 200, { ok: true });
   }
@@ -485,7 +487,7 @@ function scheduleMonitoring() {
 }
 void monitor.refresh();
 scheduleMonitoring();
-server.listen(config.port, config.host, () => console.log(`AMP Community Dashboard v2.4.0 läuft auf http://${config.host}:${config.port}`));
+server.listen(config.port, config.host, () => console.log(`AMP Community Dashboard v2.4.1 läuft auf http://${config.host}:${config.port}`));
 
 let shuttingDown = false;
 async function shutdown() {

@@ -27,18 +27,18 @@ async function tcpProbe(address, port) {
     const started = Date.now();
     let settled = false;
     const socket = connect({ host: address, port });
-    const finish = (state, detail) => {
+    const finish = (state, detail, measured = false) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       socket.destroy();
-      resolve(stamp(state, detail, { latencyMs: Date.now() - started }));
+      resolve(stamp(state, detail, measured ? { latencyMs: Date.now() - started } : {}));
     };
     const timer = setTimeout(() => finish("TIMEOUT", "Der Spielport hat nicht rechtzeitig geantwortet."), config.statusTimeoutMs);
     timer.unref?.();
     // TCP proves that this address and port are reachable, but it does not
     // prove a particular game protocol. Keep that distinction in the UI.
-    socket.once("connect", () => finish("REACHABLE", "Der Spielport ist per TCP erreichbar."));
+    socket.once("connect", () => finish("REACHABLE", "Der Spielport ist per TCP erreichbar.", true));
     socket.once("error", (error) => finish(error?.code === "ECONNREFUSED" ? "CONNECTION_REFUSED" : "QUERY_FAILED", error?.code === "ECONNREFUSED" ? "Der Spielport ist geschlossen." : "Die TCP-Verbindung konnte nicht hergestellt werden."));
   });
 }
