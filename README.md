@@ -1,4 +1,4 @@
-# AMP Community Dashboard v2.8.0
+# AMP Community Dashboard v2.9.0
 
 Eine öffentliche Übersicht für AMP-Community-Seiten. Die AMP-Seite bleibt die vollständige Detailansicht; das Dashboard bündelt Status, Hinweise, Health-Werte und bewusst freigegebene Verbindungslinks.
 
@@ -10,6 +10,7 @@ Eine öffentliche Übersicht für AMP-Community-Seiten. Die AMP-Seite bleibt die
 - Im erweiterten Modus lädt der Browser nur Diagramme nahe dem sichtbaren Bereich als kompakte Sammelabfrage. Die Verdichtung behält Latenzspitzen bei; die Oberfläche bleibt unverändert.
 - Bei vielen Serverkarten werden nicht sichtbare Karten vom Browser erst beim Scrollen vollständig gerendert. Suchanfragen sind kurz zusammengefasst; API-Nutzer können Metriken im kompakten Format abrufen.
 - Große öffentliche API-Antworten werden bei Unterstützung des Browsers per gzip übertragen und pro Datenstand kurz wiederverwendet. Sitzungs-, Login- und Verwaltungsantworten bleiben davon bewusst ausgenommen.
+- SQLite nutzt Write-Ahead Logging und die unveränderte Serverkonfiguration wird im Prozess wiederverwendet. Änderungen, Importe und Sortierungen leeren diesen Cache sofort; die Bedienung bleibt unverändert.
 - Eigene Community-URL, Spielserver-Verbindung und optionale Monitoring-Adresse je Server.
 - Adapter für TCP, Steam/Source, Minecraft Java und TeamSpeak; bei `Automatisch` werden passende sichere Abfragen ausprobiert.
 - Die Erkennung liest sichere, öffentliche AMP-Community-Seiten aus: Verbindungslinks, sichtbare Host-Port-Angaben, Datenfelder und eingebettete JSON-Seitendaten. Bei Arma 3 werden Spielport und Steam-Query-Port getrennt übernommen: Der Connect-Button nutzt die Spieladresse, die Statusabfrage den von der Community-Seite angegebenen Query-Port – sonst als sichere Regel Spielport `+1`.
@@ -57,7 +58,7 @@ Es werden keine zusätzlichen npm-Pakete benötigt.
 
    ```bash
    sudo mkdir -p /opt/amp-community-dashboard
-   sudo unzip /opt/amp-community-dashboard-v2.8.0-phase3.zip -d /opt/amp-community-dashboard
+   sudo unzip /opt/amp-community-dashboard-v2.9.0-phase4.zip -d /opt/amp-community-dashboard
    sudo useradd --system --home /opt/amp-community-dashboard --shell /usr/sbin/nologin amp 2>/dev/null || true
    sudo chown -R amp:amp /opt/amp-community-dashboard
    ```
@@ -87,20 +88,20 @@ Es werden keine zusätzlichen npm-Pakete benötigt.
 
 Die Übersicht ist dann beispielsweise unter `https://amp.example.com/uebersicht/` verfügbar.
 
-## Update auf v2.8.0
+## Update auf v2.9.0
 
 1. Dienst stoppen und den vollständigen bisherigen Ordner sichern:
 
    ```bash
    sudo systemctl stop amp-community-dashboard
-   sudo cp -a /opt/amp-community-dashboard /opt/amp-community-dashboard-before-v2.8.0
+   sudo cp -a /opt/amp-community-dashboard /opt/amp-community-dashboard-before-v2.9.0
    ```
 
 2. Das Paket in einen temporären Ordner entpacken. Anschließend alle Dateien **außer** `data/` in den bestehenden Projektordner kopieren. `data/` weder löschen noch überschreiben.
 
    ```bash
    sudo mkdir -p /opt/amp-dashboard-update
-   sudo unzip -o /opt/amp-community-dashboard-v2.8.0-phase3.zip -d /opt/amp-dashboard-update
+   sudo unzip -o /opt/amp-community-dashboard-v2.9.0-phase4.zip -d /opt/amp-dashboard-update
    sudo rsync -a --exclude=data/ /opt/amp-dashboard-update/ /opt/amp-community-dashboard/
    sudo chown -R amp:amp /opt/amp-community-dashboard
    ```
@@ -117,6 +118,8 @@ Die Übersicht ist dann beispielsweise unter `https://amp.example.com/uebersicht
    ```
 
 Der erste Start ergänzt die Datenbanktabellen automatisch. Bestehende V2-Daten und die ursprünglichen V1-Dateien bleiben unverändert. Alte Sitzungen können zur Sicherheit abgemeldet werden.
+
+Ab v2.9.0 kann SQLite während des Betriebs zusätzlich Dateien mit den Endungen `-wal` und `-shm` im Ordner `data/` anlegen. Diese gehören zur Datenbank und werden weder gelöscht noch einzeln kopiert.
 
 ## V1-Migration: Backup → Dry Run → Migration → Validierung → Rollback
 

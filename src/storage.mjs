@@ -145,7 +145,10 @@ export class Store {
     this.dataDirectory = dataDirectory;
     this.backupDirectory = backupDirectory;
     this.secretsDirectory = secretsDirectory;
+    this.serverCache = null;
   }
+
+  invalidateServerCache() { this.serverCache = null; }
 
   getMeta(key) { return this.db.prepare("SELECT value FROM meta WHERE key = ?").get(key)?.value ?? null; }
   setMeta(key, value) { this.db.prepare("INSERT INTO meta(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(key, String(value)); }
@@ -199,7 +202,9 @@ export class Store {
   }
 
   allServers() {
-    return this.db.prepare("SELECT * FROM servers ORDER BY sort_order ASC, created_at ASC").all().map((row) => ({ ...parse(row.payload, {}), id: row.id, slug: row.slug, sortOrder: row.sort_order, createdAt: row.created_at, updatedAt: row.updated_at }));
+    if (this.serverCache) return this.serverCache;
+    this.serverCache = this.db.prepare("SELECT * FROM servers ORDER BY sort_order ASC, created_at ASC").all().map((row) => ({ ...parse(row.payload, {}), id: row.id, slug: row.slug, sortOrder: row.sort_order, createdAt: row.created_at, updatedAt: row.updated_at }));
+    return this.serverCache;
   }
 
   findServer(id) { return this.allServers().find((server) => server.id === id) || null; }
@@ -207,6 +212,7 @@ export class Store {
   saveServer(server) {
     this.db.prepare(`INSERT INTO servers(id,slug,sort_order,created_at,updated_at,payload) VALUES(:id,:slug,:sortOrder,:createdAt,:updatedAt,:payload)
       ON CONFLICT(id) DO UPDATE SET slug=excluded.slug, sort_order=excluded.sort_order, updated_at=excluded.updated_at, payload=excluded.payload`).run({ id: server.id, slug: server.slug, sortOrder: server.sortOrder, createdAt: server.createdAt, updatedAt: server.updatedAt, payload: JSON.stringify(server) });
+    this.invalidateServerCache();
     return server;
   }
 
@@ -214,6 +220,7 @@ export class Store {
     const server = this.findServer(id);
     if (!server) return null;
     this.db.prepare("DELETE FROM servers WHERE id = ?").run(id);
+    this.invalidateServerCache();
     this.reindexServers();
     return server;
   }
@@ -222,10 +229,12 @@ export class Store {
     this.db.exec("BEGIN");
     try {
       this.db.exec("DELETE FROM servers");
+      this.invalidateServerCache();
       servers.forEach((server, index) => this.saveServer({ ...server, sortOrder: index }));
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
+      this.invalidateServerCache();
       throw error;
     }
     return this.allServers();
@@ -233,6 +242,7 @@ export class Store {
 
   reindexServers() {
     this.allServers().forEach((server, index) => this.db.prepare("UPDATE servers SET sort_order = ? WHERE id = ?").run(index, server.id));
+    this.invalidateServerCache();
   }
 
   reorder(ids) {
@@ -240,6 +250,7 @@ export class Store {
     if (ids.length !== servers.length || new Set(ids).size !== ids.length || !ids.every((id) => servers.some((server) => server.id === id))) throw new Error("Die Sortierung ist ungültig.");
     this.db.exec("BEGIN");
     try { ids.forEach((id, index) => this.db.prepare("UPDATE servers SET sort_order = ? WHERE id = ?").run(index, id)); this.db.exec("COMMIT"); } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+    this.invalidateServerCache();
     return this.allServers();
   }
 
@@ -331,6 +342,10 @@ export class Store {
     this.db.prepare("DELETE FROM activity_log WHERE created_at < ?").run(activityBefore);
     this.db.prepare("DELETE FROM status_history WHERE checked_at < ?").run(historyBefore);
     this.db.prepare("DELETE FROM metrics_history WHERE checked_at < ?").run(historyBefore);
+  }
+
+  checkpoint() {
+    try { this.db.exec("PRAGMA wal_checkpoint(PASSIVE)"); } catch { /* a shutdown checkpoint is an optimization, not a reason to fail */ }
   }
 
   addActivity(username, action, subject = "", result = "ok", detail = "") {
@@ -485,6 +500,7 @@ export async function openStore() {
   await mkdir(config.secretsDirectory, { recursive: true, mode: 0o700 });
   const database = new DatabaseSync(config.databaseFile);
   try { await chmod(config.databaseFile, 0o600); } catch { /* platform may not support chmod */ }
+  database.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000; PRAGMA temp_store = MEMORY;");
   database.exec(schema);
   // The column is added separately for databases created by v2.0/v2.1.
   try { database.exec("ALTER TABLE sessions ADD COLUMN csrf_token TEXT NOT NULL DEFAULT ''"); } catch { /* already migrated */ }

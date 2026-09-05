@@ -1,22 +1,24 @@
-AMP Community Dashboard v2.8.0 – Update-Anleitung
+AMP Community Dashboard v2.9.0 – Update-Anleitung
 
 Diese Anleitung verwendet ausschließlich Beispielwerte und bewahrt alle vorhandenen Daten.
 
 1. Dienst stoppen und Sicherung erstellen
 
    sudo systemctl stop amp-community-dashboard
-   sudo cp -a /opt/amp-community-dashboard /opt/amp-community-dashboard-before-v2.8.0
+   sudo cp -a /opt/amp-community-dashboard /opt/amp-community-dashboard-before-v2.9.0
 
 2. Update sicher einspielen
 
 Das Paket nicht direkt über den Projektordner entpacken. In einen temporären Ordner entpacken und danach alle Dateien außer data/ übernehmen:
 
    sudo mkdir -p /opt/amp-dashboard-update
-   sudo unzip -o /opt/amp-community-dashboard-v2.8.0-phase3.zip -d /opt/amp-dashboard-update
+   sudo unzip -o /opt/amp-community-dashboard-v2.9.0-phase4.zip -d /opt/amp-dashboard-update
    sudo rsync -a --exclude=data/ /opt/amp-dashboard-update/ /opt/amp-community-dashboard/
    sudo chown -R amp:amp /opt/amp-community-dashboard
 
 Der Ordner data/ bleibt vollständig erhalten: Datenbank, Administratorkonten, Einstellungen, Sicherungen, Uploads und Geheimnisse werden nicht überschrieben.
+
+Ab V2.9.0 nutzt die Datenbank SQLite-WAL. Neben der Datenbankdatei können deshalb Dateien mit den Endungen -wal und -shm erscheinen. Das ist normal. Sie gehören zum Datenbestand und dürfen nicht einzeln gelöscht werden.
 
 3. Dienst und Nginx übernehmen
 
@@ -42,7 +44,7 @@ Danach:
 - Unter Überwachung eine Testbenachrichtigung senden.
 - Prüfen, dass oben die Live-Verbindung keinen Wiederherstellungshinweis zeigt.
 - In „Einstellungen → Allgemein → Erweiterte Einstellungen“ optional vertrauenswürdige Community-Domains eintragen. Das sind nur Domainnamen, je Zeile, ohne https:// und ohne Pfad.
-- Beim Hinzufügen eines Servers „Server erkennen“ wählen. V2.8.0 übernimmt Spieladresse, Port und – wenn eindeutig – die passende Abfrageart aus der Community-Seite. Bei Arma 3 wird der Query-Port für die Steam-Statusabfrage getrennt gesetzt.
+- Beim Hinzufügen eines Servers „Server erkennen“ wählen. V2.9.0 übernimmt Spieladresse, Port und – wenn eindeutig – die passende Abfrageart aus der Community-Seite. Bei Arma 3 wird der Query-Port für die Steam-Statusabfrage getrennt gesetzt.
 - Statuswechsel aktualisieren nur die betroffene Karte. Im erweiterten Modus werden Diagrammdaten nur für sichtbare Karten und geöffnete Details als kompakte Sammelabfrage nachgeladen; der einfache Modus lädt keine Diagrammdaten.
 
 V1-Migration

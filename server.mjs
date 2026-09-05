@@ -611,7 +611,7 @@ async function shutdown() {
   shuttingDown = true; monitor.stop(); if (monitoringTimer) clearTimeout(monitoringTimer); events.close();
   try { await monitor.running; } catch { /* the in-flight probe already has a bounded timeout */ }
   await new Promise((resolve) => server.close(resolve));
-  try { store.db.close(); } catch { /* already closed */ }
+  try { store.checkpoint(); store.db.close(); } catch { /* already closed */ }
 }
 process.once("SIGTERM", () => { shutdown().finally(() => process.exit(0)); });
 process.once("SIGINT", () => { shutdown().finally(() => process.exit(0)); });

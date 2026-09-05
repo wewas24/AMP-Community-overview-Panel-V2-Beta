@@ -18,6 +18,13 @@ test("speichert Statusdaten ohne interne Probe-Antwort", async () => {
     const timestamp = new Date().toISOString();
     store.saveServer({ id: "server-1", slug: "test-server", sortOrder: 0, createdAt: timestamp, updatedAt: timestamp, name: "Testserver" });
 
+    assert.equal(store.db.prepare("PRAGMA journal_mode").get().journal_mode.toLowerCase(), "wal");
+    const cachedServers = store.allServers();
+    assert.equal(store.allServers(), cachedServers);
+    store.saveServer({ ...cachedServers[0], name: "Testserver aktualisiert", updatedAt: new Date(Date.parse(timestamp) + 1).toISOString() });
+    assert.notEqual(store.allServers(), cachedServers);
+    assert.equal(store.allServers()[0].name, "Testserver aktualisiert");
+
     store.saveStatus("server-1", {
       state: "ONLINE",
       detail: "Steam-Abfrage erfolgreich.",
